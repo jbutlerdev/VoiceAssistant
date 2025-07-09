@@ -10,6 +10,9 @@ This is a Swift-based macOS voice assistant application that communicates with H
 
 ### Basic Development
 ```bash
+# Download required Whisper model (run once)
+./download-model.sh
+
 # Run in development mode
 swift run
 
@@ -134,7 +137,7 @@ func newAIFeature(_ input: String) {
 The app requires local network access for AI servers. The `OpenAIService` handles permission requests through NWListener/NWBrowser pattern and requires proper Info.plist configuration.
 
 ### Whisper Model
-The app bundles a Whisper model (`ggml-base.bin`) for local speech recognition. The model is loaded asynchronously and processing is queued to prevent conflicts.
+The app uses a Whisper model (`ggml-base.bin`) for local speech recognition. The model is downloaded separately using `./download-model.sh` and excluded from git via .gitignore. The model is loaded asynchronously and processing is queued to prevent conflicts.
 
 ### Device Communication Protocol
 Communication with ESP32 follows a JSON-based protocol with specific message types for status, configuration, audio data, and control commands. All messages are newline-terminated.
