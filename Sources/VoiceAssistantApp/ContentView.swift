@@ -4,7 +4,6 @@ struct ContentView: View {
     @StateObject private var deviceManager = VoiceDeviceManager()
     @StateObject private var deviceConfig = DeviceConfiguration()
     @StateObject private var settingsStore = SettingsStore()
-    @StateObject private var aiConfig = AIConfiguration()
     @StateObject private var openAIService = OpenAIService()
     @StateObject private var sttManager = SpeechToTextManager()
     @State private var selectedTab = 0
@@ -26,7 +25,7 @@ struct ContentView: View {
             }
             .tag(1)
             
-            AIConfigurationView(aiConfig: aiConfig)
+            AIConfigurationView(settingsStore: settingsStore)
                 .tabItem {
                     Label("AI Config", systemImage: "brain.head.profile")
                 }

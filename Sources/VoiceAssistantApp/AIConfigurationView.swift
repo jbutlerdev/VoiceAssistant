@@ -1,266 +1,188 @@
 import SwiftUI
 
 struct AIConfigurationView: View {
-    @ObservedObject var aiConfig: AIConfiguration
+    @ObservedObject var settingsStore: SettingsStore
+    @StateObject private var openAIService = OpenAIService()
     @State private var showingMCPServerForm = false
+    @State private var showingAPIKeyField = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            // Header
-            HStack {
-                Image(systemName: "brain.head.profile")
-                    .font(.largeTitle)
-                    .foregroundColor(.accentColor)
-                Text("AI Configuration")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                Spacer()
-            }
-            
-            Divider()
-            
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Notice Banner
-                    NoticeBanner()
-                    
-                    // OpenAI Configuration
-                    OpenAIConfigCard(aiConfig: aiConfig)
-                    
-                    // MCP Servers Configuration
-                    MCPServersConfigCard(
-                        aiConfig: aiConfig,
-                        showingMCPServerForm: $showingMCPServerForm
-                    )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                HStack {
+                    Image(systemName: "brain.head.profile")
+                        .font(.largeTitle)
+                        .foregroundColor(.accentColor)
+                    Text("AI Configuration")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    Spacer()
                 }
-            }
-        }
-        .padding()
-        .sheet(isPresented: $showingMCPServerForm) {
-            MCPServerFormView(aiConfig: aiConfig)
-        }
-    }
-}
-
-struct NoticeBanner: View {
-    var body: some View {
-        GroupBox {
-            HStack {
-                Image(systemName: "info.circle")
-                    .foregroundColor(.blue)
-                    .font(.title2)
                 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AI Integration - Coming Soon")
+                Divider()
+                
+                // OpenAI Configuration Section
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("OpenAI Configuration")
                         .font(.headline)
-                        .foregroundColor(.primary)
+                        .padding(.bottom, 10)
                     
-                    Text("AI processing features are currently stubbed out for future implementation. Configure your settings now for when the feature becomes available.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-            }
-            .padding()
-        }
-        .background(Color.blue.opacity(0.05))
-    }
-}
-
-struct OpenAIConfigCard: View {
-    @ObservedObject var aiConfig: AIConfiguration
-    @State private var isAPIKeyVisible = false
-    
-    var body: some View {
-        GroupBox(label: Text("OpenAI Configuration").font(.headline)) {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("API URL:")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("https://api.openai.com/v1", text: $aiConfig.openAIURL)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                        .onChange(of: aiConfig.openAIURL) { _ in
-                            aiConfig.saveToUserDefaults()
-                        }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("API Key:")
+                    // Base URL
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Base URL")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        Spacer()
-                        
-                        Button(action: {
-                            isAPIKeyVisible.toggle()
-                        }) {
-                            Image(systemName: isAPIKeyVisible ? "eye.slash" : "eye")
+                        TextField("https://api.openai.com", text: $settingsStore.openAIBaseURL)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                    
+                    // API Key
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("API Key")
+                                .font(.subheadline)
                                 .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                showingAPIKeyField.toggle()
+                            }) {
+                                Image(systemName: showingAPIKeyField ? "eye.slash" : "eye")
+                                    .foregroundColor(.blue)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        
+                        if showingAPIKeyField {
+                            TextField("sk-...", text: $settingsStore.openAIAPIKey)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                        } else {
+                            SecureField("sk-...", text: $settingsStore.openAIAPIKey)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                        }
                     }
                     
-                    if isAPIKeyVisible {
-                        TextField("sk-...", text: $aiConfig.openAIAPIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                    } else {
-                        SecureField("sk-...", text: $aiConfig.openAIAPIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                    }
-                }
-                .onChange(of: aiConfig.openAIAPIKey) { _ in
-                    aiConfig.saveToUserDefaults()
-                }
-                
-                Text("Your OpenAI API key will be used for voice processing and responses. Keys are stored securely in your system keychain.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            .padding()
-        }
-    }
-}
-
-struct MCPServersConfigCard: View {
-    @ObservedObject var aiConfig: AIConfiguration
-    @Binding var showingMCPServerForm: Bool
-    
-    var body: some View {
-        GroupBox(label: Text("MCP Servers").font(.headline)) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Model Context Protocol (MCP) servers provide additional capabilities and data sources for AI interactions.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                if aiConfig.mcpServers.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "server.rack")
-                            .font(.system(size: 30))
-                            .foregroundColor(.secondary)
-                        Text("No MCP servers configured")
+                    // Model
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Model")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        Text("Add MCP servers to extend AI capabilities")
+                        
+                        HStack {
+                            TextField("gpt-4o-mini", text: $settingsStore.openAIModel)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                            
+                            Menu {
+                                ForEach(SettingsStore.commonModels, id: \.self) { model in
+                                    Button(model) {
+                                        settingsStore.openAIModel = model
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    
+                    // Max Tokens
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Max Tokens")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("32768", value: $settingsStore.openAIMaxTokens, format: .number)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        
+                        Text("Maximum number of tokens the AI can generate in response. Higher values allow longer responses but cost more.")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-                } else {
-                    ForEach(Array(aiConfig.mcpServers.enumerated()), id: \.element.id) { index, server in
-                        MCPServerRow(
-                            server: server,
-                            onDelete: {
-                                aiConfig.removeMCPServer(at: index)
-                            }
-                        )
-                    }
-                }
-                
-                Button("Add MCP Server") {
-                    showingMCPServerForm = true
-                }
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
-            }
-            .padding()
-        }
-    }
-}
-
-struct MCPServerRow: View {
-    let server: MCPServer
-    let onDelete: () -> Void
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(server.name)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text(server.url.isEmpty ? "No URL configured" : server.url)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .font(.system(.caption, design: .monospaced))
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: .constant(server.isEnabled))
-                .toggleStyle(.switch)
-                .disabled(true) // Disabled in stub version
-            
-            Button(action: onDelete) {
-                Image(systemName: "trash")
-                    .foregroundColor(.red)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(Color.secondary.opacity(0.1))
-        .cornerRadius(8)
-    }
-}
-
-struct MCPServerFormView: View {
-    @ObservedObject var aiConfig: AIConfiguration
-    @Environment(\.dismiss) private var dismiss
-    
-    @State private var serverName = ""
-    @State private var serverURL = ""
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Server Information")) {
-                    TextField("Server Name", text: $serverName)
-                        .textFieldStyle(.roundedBorder)
                     
-                    TextField("Server URL", text: $serverURL)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                    // System Prompt
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("System Prompt")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextEditor(text: $settingsStore.openAISystemPrompt)
+                            .frame(minHeight: 80, maxHeight: 120)
+                            .padding(8)
+                            .background(Color(.controlBackgroundColor))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color(.separatorColor), lineWidth: 1)
+                            )
+                        
+                        Text("Instructions that define the AI's behavior and personality. This message is sent with every conversation.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Configuration Status
+                    HStack {
+                        Image(systemName: settingsStore.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .foregroundColor(settingsStore.isConfigured ? .green : .orange)
+                        
+                        Text(settingsStore.isConfigured ? "Configuration Complete" : "Configuration Incomplete")
+                            .font(.subheadline)
+                            .foregroundColor(settingsStore.isConfigured ? .green : .orange)
+                    }
+                    .padding(.top, 10)
                 }
                 
-                Section(header: Text("Examples")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("• File System: mcp://filesystem")
-                        Text("• Database: mcp://postgres://localhost:5432/db")
-                        Text("• Web Search: mcp://search-api")
+                // Network Access Section
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Local Network Access")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    Text("If using a local AI server (like Ollama, LM Studio, etc.), you need to grant local network access.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    HStack {
+                        Button("Request Network Access") {
+                            openAIService.requestNetworkAccess()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(openAIService.hasRequestedNetworkAccess)
+                        
+                        Button("Force Save Settings") {
+                            settingsStore.forceSave()
+                        }
+                        .buttonStyle(.bordered)
                     }
+                    
+                    if openAIService.hasRequestedNetworkAccess {
+                        Text("✓ Network access requested. Check System Settings > Privacy & Security > Local Network")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                    
+                    Text("After granting permission, the app will appear in: System Settings > Privacy & Security > Local Network")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                
+                // Security Note
+                Divider()
+                
+                Text("Note: Your API key is stored securely on this device and never transmitted except to your specified OpenAI endpoint.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                }
-            }
-            .navigationTitle("Add MCP Server")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        let newServer = MCPServer(name: serverName, url: serverURL)
-                        aiConfig.mcpServers.append(newServer)
-                        aiConfig.saveToUserDefaults()
-                        dismiss()
-                    }
-                    .disabled(serverName.isEmpty)
-                }
+                    .padding(.top, 10)
             }
         }
-        .frame(width: 400, height: 300)
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
+
 
 // Preview removed for command-line build compatibility

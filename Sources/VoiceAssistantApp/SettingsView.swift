@@ -2,161 +2,112 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settingsStore: SettingsStore
-    @StateObject private var openAIService = OpenAIService()
-    @State private var showingAPIKeyField = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("OpenAI Configuration")
-                .font(.headline)
-                .padding(.bottom, 10)
-            
-            VStack(alignment: .leading, spacing: 15) {
-                // Base URL
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Base URL")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("https://api.openai.com", text: $settingsStore.openAIBaseURL)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                }
-                
-                // API Key
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text("API Key")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            showingAPIKeyField.toggle()
-                        }) {
-                            Image(systemName: showingAPIKeyField ? "eye.slash" : "eye")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    
-                    if showingAPIKeyField {
-                        TextField("sk-...", text: $settingsStore.openAIAPIKey)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                    } else {
-                        SecureField("sk-...", text: $settingsStore.openAIAPIKey)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                    }
-                }
-                
-                // Model
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Model")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    HStack {
-                        TextField("gpt-4o-mini", text: $settingsStore.openAIModel)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                        
-                        Menu {
-                            ForEach(SettingsStore.commonModels, id: \.self) { model in
-                                Button(model) {
-                                    settingsStore.openAIModel = model
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                }
-                
-                // Max Tokens
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Max Tokens")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("32768", value: $settingsStore.openAIMaxTokens, format: .number)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                    
-                    Text("Maximum number of tokens the AI can generate in response. Higher values allow longer responses but cost more.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                
-                // System Prompt
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("System Prompt")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    TextEditor(text: $settingsStore.openAISystemPrompt)
-                        .frame(minHeight: 80, maxHeight: 120)
-                        .padding(8)
-                        .background(Color(.controlBackgroundColor))
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color(.separatorColor), lineWidth: 1)
-                        )
-                    
-                    Text("Instructions that define the AI's behavior and personality. This message is sent with every conversation.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            // Configuration Status
+            // Header
             HStack {
-                Image(systemName: settingsStore.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .foregroundColor(settingsStore.isConfigured ? .green : .orange)
-                
-                Text(settingsStore.isConfigured ? "Configuration Complete" : "Configuration Incomplete")
-                    .font(.subheadline)
-                    .foregroundColor(settingsStore.isConfigured ? .green : .orange)
+                Image(systemName: "gear")
+                    .font(.largeTitle)
+                    .foregroundColor(.accentColor)
+                Text("Settings")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                Spacer()
             }
-            .padding(.top, 10)
             
-            // Network Access Section
             Divider()
             
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Local Network Access")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+            // App Information Section
+            VStack(alignment: .leading, spacing: 15) {
+                Text("App Information")
+                    .font(.headline)
+                    .padding(.bottom, 10)
                 
-                Text("If using a local AI server (like Ollama, LM Studio, etc.), you need to grant local network access.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                HStack {
-                    Button("Request Network Access") {
-                        openAIService.requestNetworkAccess()
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Version:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("1.0.0")
+                            .font(.subheadline)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(openAIService.hasRequestedNetworkAccess)
                     
-                    Button("Force Save Settings") {
-                        settingsStore.forceSave()
+                    HStack {
+                        Text("Build:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown")
+                            .font(.subheadline)
+                    }
+                    
+                    HStack {
+                        Text("Bundle ID:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(Bundle.main.bundleIdentifier ?? "Unknown")
+                            .font(.subheadline)
+                            .font(.system(.subheadline, design: .monospaced))
+                    }
+                }
+            }
+            
+            Divider()
+            
+            // Data Management Section
+            VStack(alignment: .leading, spacing: 15) {
+                Text("Data Management")
+                    .font(.headline)
+                    .padding(.bottom, 10)
+                
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Settings are automatically saved to your device and synchronized across app launches.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Button("Reset All Settings") {
+                        // Reset to default values
+                        settingsStore.openAIBaseURL = "https://api.openai.com"
+                        settingsStore.openAIAPIKey = ""
+                        settingsStore.openAIModel = "gpt-4o-mini"
+                        settingsStore.openAIMaxTokens = 32768
+                        settingsStore.openAISystemPrompt = "You are a helpful assistant."
                     }
                     .buttonStyle(.bordered)
+                    .foregroundColor(.red)
                 }
+            }
+            
+            Divider()
+            
+            // About Section
+            VStack(alignment: .leading, spacing: 15) {
+                Text("About")
+                    .font(.headline)
+                    .padding(.bottom, 10)
                 
-                if openAIService.hasRequestedNetworkAccess {
-                    Text("✓ Network access requested. Check System Settings > Privacy & Security > Local Network")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Home Assistant Voice - Local")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    Text("A local voice assistant for Home Assistant Voice devices with USB communication and AI integration.")
                         .font(.caption)
-                        .foregroundColor(.green)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Built with Swift, SwiftUI, and Whisper for speech recognition.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                
-                Text("After granting permission, the app will appear in: System Settings > Privacy & Security > Local Network")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
             }
             
             Spacer()
             
-            Text("Note: Your API key is stored securely on this device and never transmitted except to your specified OpenAI endpoint.")
+            // Footer Note
+            Text("For AI configuration, see the AI Config tab. For device settings, see the Device tab.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.top, 10)
