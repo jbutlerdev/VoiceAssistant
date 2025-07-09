@@ -43,6 +43,9 @@ Thumbs.db
 *.log
 app_output.log
 
+# Whisper model files
+Sources/VoiceAssistantApp/Resources/ggml-*.bin
+
 # IDE
 .vscode/
 .idea/

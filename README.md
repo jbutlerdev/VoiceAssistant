@@ -17,6 +17,17 @@ A Swift-based macOS application that communicates with the Home Assistant Voice 
 - Xcode 14.0+
 - OpenAI API key (for AI features)
 
+## Setup
+
+### Download Whisper Model
+Before building, you need to download the Whisper model for speech recognition:
+
+```bash
+./download-model.sh
+```
+
+This downloads the required `ggml-base.bin` file (~141MB) to the appropriate location.
+
 ## Build and Run
 
 ### Development Mode

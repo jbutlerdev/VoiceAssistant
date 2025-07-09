@@ -17,13 +17,21 @@ git clone https://github.com/yourusername/home-assistant-voice-pe.git
 cd home-assistant-voice-pe/VoiceAssistantApp
 ```
 
-### 2. Install Dependencies
+### 2. Download Whisper Model
+Before building, download the required Whisper model:
+```bash
+./download-model.sh
+```
+
+This downloads the `ggml-base.bin` file (~141MB) needed for speech recognition.
+
+### 3. Install Dependencies
 The project uses Swift Package Manager, so dependencies are automatically resolved:
 ```bash
 swift package resolve
 ```
 
-### 3. Development Build
+### 4. Development Build
 For development and testing:
 ```bash
 swift build
@@ -150,6 +158,7 @@ The app requires local network permission to communicate with AI servers on your
    - Check Console.app for permission errors
 
 2. **Whisper Model Not Found**
+   - Run `./download-model.sh` to download the model
    - Ensure `ggml-base.bin` is in the Resources directory
    - Check the build log for resource copying errors
 
