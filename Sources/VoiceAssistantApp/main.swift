@@ -92,21 +92,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
         
-        // Configure window toolbar
-        setupWindowToolbar()
+        // Remove toolbar setup for consistent SwiftUI TabView experience
         
         // Ensure window appears in front
         NSApp.activate(ignoringOtherApps: true)
     }
     
-    private func setupWindowToolbar() {
-        let toolbar = NSToolbar(identifier: "MainToolbar")
-        toolbar.displayMode = .iconAndLabel
-        toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = true
-        toolbar.delegate = self
-        window.toolbar = toolbar
-    }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
@@ -125,92 +116,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     
-    // MARK: - Toolbar Actions
-    @objc private func showConnectionTab() {
-        // Send notification to switch to connection tab
-        NotificationCenter.default.post(name: .switchToTab, object: 0)
-    }
-    
-    @objc private func showDeviceTab() {
-        // Send notification to switch to device tab
-        NotificationCenter.default.post(name: .switchToTab, object: 1)
-    }
-    
-    @objc private func showAITab() {
-        // Send notification to switch to AI tab
-        NotificationCenter.default.post(name: .switchToTab, object: 2)
-    }
 }
 
-// MARK: - Toolbar Delegate
-extension AppDelegate: NSToolbarDelegate {
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        
-        switch itemIdentifier {
-        case NSToolbarItem.Identifier("connection"):
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Connection"
-            item.paletteLabel = "Device Connection"
-            item.toolTip = "View device connection status"
-            item.target = self
-            item.action = #selector(showConnectionTab)
-            if let image = NSImage(systemSymbolName: "cable.connector", accessibilityDescription: "Connection") {
-                image.size = NSSize(width: 32, height: 32)
-                item.image = image
-            }
-            return item
-            
-        case NSToolbarItem.Identifier("device"):
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Device"
-            item.paletteLabel = "Device Settings"
-            item.toolTip = "Configure device settings"
-            item.target = self
-            item.action = #selector(showDeviceTab)
-            if let image = NSImage(systemSymbolName: "speaker.wave.3", accessibilityDescription: "Device") {
-                image.size = NSSize(width: 32, height: 32)
-                item.image = image
-            }
-            return item
-            
-        case NSToolbarItem.Identifier("ai"):
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "AI Config"
-            item.paletteLabel = "AI Configuration"
-            item.toolTip = "Configure AI settings"
-            item.target = self
-            item.action = #selector(showAITab)
-            if let image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "AI Config") {
-                image.size = NSSize(width: 32, height: 32)
-                item.image = image
-            }
-            return item
-            
-        default:
-            return nil
-        }
-    }
-    
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [
-            NSToolbarItem.Identifier("connection"),
-            NSToolbarItem.Identifier.flexibleSpace,
-            NSToolbarItem.Identifier("device"),
-            NSToolbarItem.Identifier.flexibleSpace,
-            NSToolbarItem.Identifier("ai")
-        ]
-    }
-    
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [
-            NSToolbarItem.Identifier("connection"),
-            NSToolbarItem.Identifier("device"),
-            NSToolbarItem.Identifier("ai"),
-            NSToolbarItem.Identifier.flexibleSpace,
-            NSToolbarItem.Identifier.space
-        ]
-    }
-}
 
 extension NSMenuItem {
     func withModifierMask(_ mask: NSEvent.ModifierFlags) -> NSMenuItem {
@@ -220,7 +127,6 @@ extension NSMenuItem {
 }
 
 extension Notification.Name {
-    static let switchToTab = Notification.Name("switchToTab")
     static let deviceStatusUpdated = Notification.Name("deviceStatusUpdated")
     static let wakeWordOptionsUpdated = Notification.Name("wakeWordOptionsUpdated")
 }

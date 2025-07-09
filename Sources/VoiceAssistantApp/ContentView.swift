@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var deviceManager = VoiceDeviceManager()
     @StateObject private var deviceConfig = DeviceConfiguration()
     @StateObject private var settingsStore = SettingsStore()
+    @StateObject private var aiConfig = AIConfiguration()
     @StateObject private var openAIService = OpenAIService()
     @StateObject private var sttManager = SpeechToTextManager()
     @State private var selectedTab = 0
@@ -25,6 +26,12 @@ struct ContentView: View {
             }
             .tag(1)
             
+            AIConfigurationView(aiConfig: aiConfig)
+                .tabItem {
+                    Label("AI Config", systemImage: "brain.head.profile")
+                }
+                .tag(2)
+            
             TranscriptionView(
                 deviceManager: deviceManager, 
                 sttManager: sttManager,
@@ -34,13 +41,13 @@ struct ContentView: View {
                 .tabItem {
                     Label("Transcription", systemImage: "waveform.and.mic")
                 }
-                .tag(2)
+                .tag(3)
             
             SettingsView(settingsStore: settingsStore)
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
-                .tag(3)
+                .tag(4)
         }
         .frame(minWidth: 800, minHeight: 600)
         .onAppear {
@@ -56,11 +63,6 @@ struct ContentView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     openAIService.requestNetworkAccess()
                 }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .switchToTab)) { notification in
-            if let tabIndex = notification.object as? Int {
-                selectedTab = tabIndex
             }
         }
         .onDisappear {
