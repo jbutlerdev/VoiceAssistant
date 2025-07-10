@@ -75,6 +75,7 @@ struct SettingsView: View {
                         settingsStore.openAIModel = "gpt-4o-mini"
                         settingsStore.openAIMaxTokens = 32768
                         settingsStore.openAISystemPrompt = "You are a helpful assistant."
+                        settingsStore.enableTextToSpeech = false
                     }
                     .buttonStyle(.bordered)
                     .foregroundColor(.red)

@@ -3,17 +3,31 @@ import Foundation
 import Combine
 import AVFoundation
 
+@MainActor
 class SpeechToTextManager: ObservableObject {
     @Published var transcriptionText: String = ""
     @Published var isTranscribing: Bool = false
     @Published var isModelLoaded: Bool = false
     @Published var lastError: String?
     @Published var streamingSegments: [TranscriptionSegment] = []
+    @Published var audioQualityStats: AudioQualityStats?
     
     private var whisper: Whisper?
     private var audioBuffer: [Float] = []
     private let sampleRate: Double = 16000.0 // ESP32 sends 16kHz audio
     private let minimumAudioLength: Int = 8000 // 0.5 second minimum for transcription
+    
+    // Audio capture for history
+    private var capturedAudioBuffer: [Float] = []
+    var lastCapturedAudio: [Float] {
+        return capturedAudioBuffer
+    }
+    
+    // Store raw unprocessed audio for debugging
+    private var rawAudioBuffer: [Float] = []
+    var lastRawAudio: [Float] {
+        return rawAudioBuffer
+    }
     
     // Whisper instance synchronization
     private var isWhisperBusy: Bool = false
@@ -28,6 +42,40 @@ class SpeechToTextManager: ObservableObject {
         var isPartial: Bool = false
     }
     
+    struct AudioQualityStats {
+        let sampleCount: Int
+        let durationSeconds: Double
+        let maxAmplitude: Float
+        let avgAmplitude: Float
+        let rmsLevel: Float
+        let timestamp: Date
+        
+        var qualityDescription: String {
+            if maxAmplitude < 0.01 {
+                return "Very Low"
+            } else if maxAmplitude < 0.1 {
+                return "Low"
+            } else if maxAmplitude < 0.5 {
+                return "Good"
+            } else if maxAmplitude < 0.95 {
+                return "High"
+            } else {
+                return "Clipping"
+            }
+        }
+        
+        var noiseLevel: String {
+            let snr = maxAmplitude / max(avgAmplitude, 0.001)
+            if snr > 10 {
+                return "Low Noise"
+            } else if snr > 5 {
+                return "Medium Noise"
+            } else {
+                return "High Noise"
+            }
+        }
+    }
+    
     init() {
         loadWhisperModel()
         // Reset busy flag on initialization
@@ -39,7 +87,7 @@ class SpeechToTextManager: ObservableObject {
         
         // Get path to the bundled model file
         guard let modelPath = getModelPath() else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.lastError = "Could not find Whisper model file in bundle"
             }
             return
@@ -55,7 +103,7 @@ class SpeechToTextManager: ObservableObject {
             
             let whisperModel = Whisper(fromFileURL: URL(fileURLWithPath: modelPath), withParams: whisperParams)
             
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.whisper = whisperModel
                 self.isModelLoaded = true
                 print("STT: Whisper model loaded")
@@ -86,20 +134,36 @@ class SpeechToTextManager: ObservableObject {
     // MARK: - Audio Processing
     
     func processAudioSamples(_ samples: [Int16]) {
+        // First, store raw unmodified samples converted to Float32 with standard conversion
+        let rawFloatSamples = samples.map { Float($0) / 32768.0 }
+        rawAudioBuffer.append(contentsOf: rawFloatSamples)
+        
         // Convert Int16 samples to Float32 normalized to [-1.0, 1.0]
-        let floatSamples = samples.compactMap { sample -> Float? in
-            let floatValue = Float(sample) / 32767.0
+        // Use consistent divisor to avoid DC bias
+        let floatSamples = samples.map { sample -> Float in
+            // Use standard conversion with slight headroom for safety
+            let floatValue = Float(sample) / 36000.0  // Balanced conversion: preserves levels but prevents clipping
+            
             // Check for NaN, infinity, or invalid values
             if floatValue.isNaN || floatValue.isInfinite {
-                return nil
+                return 0.0
             }
             // Clamp to valid range
-            return max(-1.0, min(1.0, floatValue))
+            return max(-0.9, min(0.9, floatValue))
         }
         
-        // Only append if we have valid samples
+        // Minimal processing - just remove DC offset if significant
         if !floatSamples.isEmpty {
-            audioBuffer.append(contentsOf: floatSamples)
+            let dcOffset = floatSamples.reduce(0, +) / Float(floatSamples.count)
+            
+            // Only remove DC offset if it's significant (> 0.05)
+            if abs(dcOffset) > 0.05 {
+                let dcCorrectedSamples = floatSamples.map { $0 - dcOffset }
+                audioBuffer.append(contentsOf: dcCorrectedSamples)
+            } else {
+                // Use original samples if DC offset is minimal
+                audioBuffer.append(contentsOf: floatSamples)
+            }
         }
     }
     
@@ -111,9 +175,12 @@ class SpeechToTextManager: ObservableObject {
         
         isTranscribing = true
         audioBuffer.removeAll()
+        capturedAudioBuffer.removeAll()
+        rawAudioBuffer.removeAll()
         streamingSegments.removeAll()
         transcriptionText = ""
         lastError = nil
+        audioQualityStats = nil
     }
     
     func stopRecording() {
@@ -137,52 +204,68 @@ class SpeechToTextManager: ObservableObject {
             return
         }
         
-        let workItem = DispatchWorkItem { [weak self] in
-            // Check again inside the queue
-            guard let self = self else { return }
-            guard !self.isWhisperBusy else { return }
-            
-            self.isWhisperBusy = true
-            let audioToTranscribe = self.audioBuffer // Capture current audio
-            
-            Task {
-                do {
+        isWhisperBusy = true
+        let audioToTranscribe = audioBuffer // Capture current audio
+        
+        // Store ORIGINAL unprocessed audio for history (to avoid static in playback)
+        capturedAudioBuffer = audioToTranscribe
+        
+        Task {
+            do {
                     print("STT: Transcribing \(audioToTranscribe.count) samples (\(String(format: "%.1f", Double(audioToTranscribe.count) / self.sampleRate))s)")
                     
-                    // Apply noise reduction and amplification
+                    // Calculate audio quality metrics for UI display
+                    let maxAmp = audioToTranscribe.map { abs($0) }.max() ?? 0
+                    let avgAmp = audioToTranscribe.reduce(0) { $0 + abs($1) } / Float(audioToTranscribe.count)
+                    let rms = sqrt(audioToTranscribe.reduce(0) { $0 + $1 * $1 } / Float(audioToTranscribe.count))
+                    let duration = Double(audioToTranscribe.count) / self.sampleRate
+                    
+                    // Additional diagnostics for static analysis
+                    let zeroCrossings = audioToTranscribe.indices.dropFirst().filter { i in
+                        (audioToTranscribe[i-1] < 0 && audioToTranscribe[i] >= 0) ||
+                        (audioToTranscribe[i-1] >= 0 && audioToTranscribe[i] < 0)
+                    }.count
+                    let zeroCrossingRate = Float(zeroCrossings) / Float(audioToTranscribe.count)
+                    
+                    // Check for constant high-frequency noise pattern
+                    var highFreqEnergy: Float = 0
+                    if audioToTranscribe.count > 10 {
+                        for i in 1..<min(1000, audioToTranscribe.count) {
+                            let diff = audioToTranscribe[i] - audioToTranscribe[i-1]
+                            highFreqEnergy += diff * diff
+                        }
+                        highFreqEnergy = sqrt(highFreqEnergy / Float(min(999, audioToTranscribe.count - 1)))
+                    }
+                    
+                    print("STT: Zero crossing rate: \(String(format: "%.3f", zeroCrossingRate)), High-freq energy: \(String(format: "%.3f", highFreqEnergy))")
+                    
+                    // Store stats for UI display
+                    await MainActor.run {
+                        self.audioQualityStats = AudioQualityStats(
+                            sampleCount: audioToTranscribe.count,
+                            durationSeconds: duration,
+                            maxAmplitude: maxAmp,
+                            avgAmplitude: avgAmp,
+                            rmsLevel: rms,
+                            timestamp: Date()
+                        )
+                    }
+                    
+                    print("STT: Audio quality - Max: \(String(format: "%.4f", maxAmp)), Avg: \(String(format: "%.4f", avgAmp)), RMS: \(String(format: "%.4f", rms))")
+                    
+                    // Apply noise reduction and amplification to a COPY for transcription only
                     var processedAudio = audioToTranscribe
                     
-                    // Validate and clean audio data
-                    processedAudio = processedAudio.compactMap { sample in
+                    // Minimal validation - only remove NaN/infinite values
+                    processedAudio = processedAudio.map { sample in
                         if sample.isNaN || sample.isInfinite {
                             return 0.0
                         }
                         return max(-1.0, min(1.0, sample))
                     }
                     
-                    // Apply noise gate and amplification
-                    let maxAmplitude = processedAudio.map { abs($0) }.max() ?? 0
-                    let avgAmplitude = processedAudio.reduce(0) { $0 + abs($1) } / Float(processedAudio.count)
-                    
-                    let noiseThreshold = avgAmplitude * 0.3
-                    processedAudio = processedAudio.map { sample in
-                        if abs(sample) < noiseThreshold {
-                            return 0.0
-                        }
-                        return sample
-                    }
-                    
-                    // Amplify if needed
-                    if maxAmplitude < 0.5 {
-                        let amplificationFactor: Float = 0.7 / maxAmplitude
-                        processedAudio = processedAudio.map { sample in
-                            let amplified = sample * amplificationFactor
-                            if amplified.isNaN || amplified.isInfinite {
-                                return 0.0
-                            }
-                            return max(-1.0, min(1.0, amplified))
-                        }
-                    }
+                    // No amplification - preserve original audio levels to avoid clipping
+                    // The ESP32 audio levels should be appropriate as-is
                     
                     // Add silence padding
                     let paddingSamples = Int(self.sampleRate * 0.3)
@@ -192,8 +275,7 @@ class SpeechToTextManager: ObservableObject {
                     // Use the standard transcribe method
                     let segments = try await whisper.transcribe(audioFrames: processedAudio)
                     
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
+                    await MainActor.run {
                         self.isWhisperBusy = false
                         
                         // Clear previous segments and add new complete transcription
@@ -222,8 +304,7 @@ class SpeechToTextManager: ObservableObject {
                         print("STT: \"\(self.transcriptionText)\"")
                     }
                 } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
+                    await MainActor.run {
                         self.isWhisperBusy = false
                         self.isTranscribing = false
                         self.lastError = "Transcription failed: \(error.localizedDescription)"
@@ -234,17 +315,14 @@ class SpeechToTextManager: ObservableObject {
                     }
                 }
             }
-        }
-        
-        whisperQueue.async(execute: workItem)
     }
     
     
     // MARK: - Public API
     
-    func transcribeAudio(_ audioSamples: [Int16], completion: @escaping (String) -> Void) {
+    func transcribeAudio(_ audioSamples: [Int16], completion: @escaping @Sendable (String) -> Void) {
         guard isModelLoaded, let whisper = whisper else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.lastError = "Whisper model not loaded"
                 completion("")
             }
@@ -255,7 +333,7 @@ class SpeechToTextManager: ObservableObject {
         let floatSamples = audioSamples.map { Float($0) / 32767.0 }
         
         guard floatSamples.count >= minimumAudioLength else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.lastError = "Audio too short for transcription"
                 completion("")
             }
@@ -264,72 +342,69 @@ class SpeechToTextManager: ObservableObject {
         
         // Skip if Whisper is busy
         guard !isWhisperBusy else {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.lastError = "Whisper is busy with another transcription"
                 completion("")
             }
             return
         }
         
-        DispatchQueue.main.async { [weak self] in
-            self?.isTranscribing = true
-            self?.lastError = nil
+        Task { @MainActor in
+            self.isTranscribing = true
+            self.lastError = nil
         }
         
-        whisperQueue.async {
-            // Check again inside the queue
-            guard !self.isWhisperBusy else {
-                DispatchQueue.main.async {
+        Task {
+            // Check if whisper is busy
+            let isBusy = await MainActor.run { isWhisperBusy }
+            guard !isBusy else {
+                await MainActor.run {
                     self.isTranscribing = false
-                    completion("")
                 }
+                completion("")
                 return
             }
             
-            self.isWhisperBusy = true
+            await MainActor.run { self.isWhisperBusy = true }
             
-            Task {
-                do {
-                    let segments = try await whisper.transcribe(audioFrames: floatSamples)
+            do {
+                let segments = try await whisper.transcribe(audioFrames: floatSamples)
+                
+                await MainActor.run {
+                    self.isWhisperBusy = false
                     
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.isWhisperBusy = false
-                        
-                        var fullText = ""
-                        self.streamingSegments.removeAll()
-                        
-                        for segment in segments {
-                            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !text.isEmpty {
-                                fullText += text + " "
-                                
-                                let transcriptionSegment = TranscriptionSegment(
-                                    text: text,
-                                    startTime: segment.startTime,
-                                    endTime: segment.endTime,
-                                    confidence: 1.0
-                                )
-                                self.streamingSegments.append(transcriptionSegment)
-                            }
+                    var fullText = ""
+                    self.streamingSegments.removeAll()
+                    
+                    for segment in segments {
+                        let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty {
+                            fullText += text + " "
+                            
+                            let transcriptionSegment = TranscriptionSegment(
+                                text: text,
+                                startTime: segment.startTime,
+                                endTime: segment.endTime,
+                                confidence: 1.0
+                            )
+                            self.streamingSegments.append(transcriptionSegment)
                         }
-                        
-                        let result = self.postProcessTranscription(fullText)
-                        self.transcriptionText = result
-                        
-                        self.isTranscribing = false
-                        completion(result)
                     }
-                } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.isWhisperBusy = false
-                        self.lastError = "Transcription failed: \(error.localizedDescription)"
-                        print("STT Error: \(error)")
-                        self.isTranscribing = false
-                        completion("")
-                    }
+                    
+                    let result = self.postProcessTranscription(fullText)
+                    self.transcriptionText = result
+                    
+                    self.isTranscribing = false
+                    completion(result)
                 }
+            } catch {
+                await MainActor.run {
+                    self.isWhisperBusy = false
+                    self.lastError = "Transcription failed: \(error.localizedDescription)"
+                    print("STT Error: \(error)")
+                    self.isTranscribing = false
+                }
+                completion("")
             }
         }
     }
@@ -338,6 +413,7 @@ class SpeechToTextManager: ObservableObject {
         transcriptionText = ""
         streamingSegments.removeAll()
         audioBuffer.removeAll()
+        capturedAudioBuffer.removeAll()
     }
     
     // Reset Whisper state
@@ -374,32 +450,30 @@ class SpeechToTextManager: ObservableObject {
             testAudio.append(sample)
         }
         
-        whisperQueue.async {
-            guard !self.isWhisperBusy else {
-                DispatchQueue.main.async {
+        Task {
+            let isBusy = await MainActor.run { isWhisperBusy }
+            guard !isBusy else {
+                await MainActor.run {
                     self.lastError = "Whisper became busy"
                 }
                 return
             }
             
-            self.isWhisperBusy = true
+            await MainActor.run { self.isWhisperBusy = true }
             
-            Task {
-                do {
-                    let segments = try await whisper.transcribe(audioFrames: testAudio)
-                    
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.isWhisperBusy = false
-                        print("STT Test: Got \(segments.count) segments")
-                        self.lastError = nil
-                    }
-                } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.isWhisperBusy = false
-                        self?.lastError = "Test transcription failed: \(error.localizedDescription)"
-                        print("STT Test Error: \(error)")
-                    }
+            do {
+                let segments = try await whisper.transcribe(audioFrames: testAudio)
+                
+                await MainActor.run {
+                    self.isWhisperBusy = false
+                    print("STT Test: Got \(segments.count) segments")
+                    self.lastError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self.isWhisperBusy = false
+                    self.lastError = "Test transcription failed: \(error.localizedDescription)"
+                    print("STT Test Error: \(error)")
                 }
             }
         }
@@ -417,7 +491,21 @@ class SpeechToTextManager: ObservableObject {
                                                       with: "", 
                                                       options: .regularExpression)
         
-        // Clean up any double spaces that may result from removing parentheses
+        // Remove content within asterisks including the asterisks themselves
+        // This handles cases like "*laughing*", "*noise*", "*background music*", etc.
+        let asterisksPattern = "\\*[^*]*\\*"
+        cleanedText = cleanedText.replacingOccurrences(of: asterisksPattern, 
+                                                      with: "", 
+                                                      options: .regularExpression)
+        
+        // Remove content within square brackets including the brackets themselves
+        // This handles cases like "[music]", "[noise]", "[background sound]", etc.
+        let bracketsPattern = "\\[[^\\]]*\\]"
+        cleanedText = cleanedText.replacingOccurrences(of: bracketsPattern, 
+                                                      with: "", 
+                                                      options: .regularExpression)
+        
+        // Clean up any double spaces that may result from removing parentheses, asterisks, or brackets
         cleanedText = cleanedText.replacingOccurrences(of: "\\s+", 
                                                       with: " ", 
                                                       options: .regularExpression)

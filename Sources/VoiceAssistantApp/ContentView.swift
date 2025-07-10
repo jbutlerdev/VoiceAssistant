@@ -6,7 +6,10 @@ struct ContentView: View {
     @StateObject private var settingsStore = SettingsStore()
     @StateObject private var openAIService = OpenAIService()
     @StateObject private var sttManager = SpeechToTextManager()
-    @State private var selectedTab = 0
+    @StateObject private var ttsManager = TextToSpeechManager()
+    @StateObject private var historyManager = ChatHistoryManager()
+    @StateObject private var mcpManager = MCPManager()
+    @State private var selectedTab = 3 // Default to Transcription tab
     
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -35,22 +38,37 @@ struct ContentView: View {
                 deviceManager: deviceManager, 
                 sttManager: sttManager,
                 openAIService: openAIService,
-                settingsStore: settingsStore
+                settingsStore: settingsStore,
+                ttsManager: ttsManager,
+                historyManager: historyManager
             )
                 .tabItem {
                     Label("Transcription", systemImage: "waveform.and.mic")
                 }
                 .tag(3)
             
+            MCPConfigurationView(mcpManager: mcpManager)
+                .tabItem {
+                    Label("MCP", systemImage: "server.rack")
+                }
+                .tag(4)
+            
+            ChatHistoryView(historyManager: historyManager)
+                .tabItem {
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                }
+                .tag(5)
+            
             SettingsView(settingsStore: settingsStore)
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
-                .tag(4)
+                .tag(6)
         }
         .frame(minWidth: 800, minHeight: 600)
         .onAppear {
             deviceManager.setSpeechToTextManager(sttManager)
+            openAIService.setMCPManager(mcpManager)
             deviceManager.startDeviceDiscovery()
             
             // Check if we need to request network access for local servers
@@ -59,7 +77,8 @@ struct ContentView: View {
                settingsStore.openAIBaseURL.contains("192.168.") || 
                settingsStore.openAIBaseURL.contains("10.") {
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                     openAIService.requestNetworkAccess()
                 }
             }

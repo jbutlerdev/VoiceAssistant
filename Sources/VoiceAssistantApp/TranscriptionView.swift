@@ -5,11 +5,14 @@ struct TranscriptionView: View {
     @ObservedObject var sttManager: SpeechToTextManager
     @ObservedObject var openAIService: OpenAIService
     @ObservedObject var settingsStore: SettingsStore
+    @ObservedObject var ttsManager: TextToSpeechManager
+    @ObservedObject var historyManager: ChatHistoryManager
     @State private var showDetailedView = false
     @State private var autoScroll = true
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 16) {
             // Header
             HStack {
                 Label("Speech to Text", systemImage: "waveform.and.mic")
@@ -116,7 +119,7 @@ struct TranscriptionView: View {
                             simpleTranscriptionView
                         }
                     }
-                    .frame(minHeight: 200, maxHeight: 400)
+                    .frame(height: geometry.size.height * 0.33)
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(8)
                     .onChange(of: sttManager.transcriptionText) { _ in
@@ -138,27 +141,6 @@ struct TranscriptionView: View {
             
             // Controls
             HStack {
-                // Manual transcription controls (for testing)
-                if !sttManager.isTranscribing {
-                    HStack {
-                        Button("Test Whisper") {
-                            sttManager.testWhisperWithSyntheticAudio()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!sttManager.isModelLoaded)
-                        
-                        Button("Reset State") {
-                            sttManager.resetWhisperState()
-                        }
-                        .buttonStyle(.bordered)
-                        
-                        Button("Status") {
-                            print("STT Status: \(sttManager.whisperStatus)")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                
                 Spacer()
                 
                 // Statistics
@@ -179,8 +161,13 @@ struct TranscriptionView: View {
                     
                     AIResponseView(
                         openAIService: openAIService,
+                        settingsStore: settingsStore,
+                        ttsManager: ttsManager,
+                        historyManager: historyManager,
+                        sttManager: sttManager,
                         transcribedText: sttManager.transcriptionText
                     )
+                    .frame(height: geometry.size.height * 0.6)
                     
                     // Auto-send status
                     if openAIService.isProcessing {
@@ -227,36 +214,30 @@ struct TranscriptionView: View {
                 .background(Color.orange.opacity(0.1))
                 .cornerRadius(8)
             }
+            }
+            .padding()
+            .background(Color(.controlBackgroundColor))
+            .cornerRadius(12)
         }
-        .padding()
-        .background(Color(.controlBackgroundColor))
-        .cornerRadius(12)
         .onChange(of: sttManager.transcriptionText) { newText in
             print("STT: Transcription changed to: \"\(newText)\"")
             print("STT: Settings configured: \(settingsStore.isConfigured)")
             print("STT: OpenAI processing: \(openAIService.isProcessing)")
+            print("STT: Is transcribing: \(sttManager.isTranscribing)")
             
-            // Auto-send to AI if configured and we have new transcription
-            if settingsStore.isConfigured && !newText.isEmpty && !openAIService.isProcessing {
-                print("STT: Auto-sending to AI...")
-                // Add a small delay to avoid rapid-fire requests
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if !openAIService.isProcessing {
-                        print("STT: Sending message to OpenAI: \"\(newText)\"")
-                        openAIService.sendMessage(
-                            newText,
-                            baseURL: settingsStore.openAIBaseURL,
-                            apiKey: settingsStore.openAIAPIKey,
-                            model: settingsStore.openAIModel,
-                            maxTokens: settingsStore.openAIMaxTokens,
-                            systemPrompt: settingsStore.openAISystemPrompt
-                        )
-                    } else {
-                        print("STT: OpenAI service became busy, skipping auto-send")
-                    }
-                }
+            // Only auto-send to AI when transcription is complete (not while actively transcribing)
+            if settingsStore.isConfigured && !newText.isEmpty && !openAIService.isProcessing && !sttManager.isTranscribing {
+                print("STT: Transcription complete, sending to AI: \"\(newText)\"")
+                openAIService.sendMessage(
+                    newText,
+                    baseURL: settingsStore.openAIBaseURL,
+                    apiKey: settingsStore.openAIAPIKey,
+                    model: settingsStore.openAIModel,
+                    maxTokens: settingsStore.openAIMaxTokens,
+                    systemPrompt: settingsStore.openAISystemPrompt
+                )
             } else {
-                print("STT: Not auto-sending - configured: \(settingsStore.isConfigured), empty: \(newText.isEmpty), processing: \(openAIService.isProcessing)")
+                print("STT: Not auto-sending - configured: \(settingsStore.isConfigured), empty: \(newText.isEmpty), processing: \(openAIService.isProcessing), transcribing: \(sttManager.isTranscribing)")
             }
         }
     }
@@ -356,4 +337,5 @@ struct TranscriptionView: View {
         .background(segment.isPartial ? Color.blue.opacity(0.05) : Color.green.opacity(0.05))
         .cornerRadius(6)
     }
+    
 }

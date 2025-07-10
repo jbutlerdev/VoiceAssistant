@@ -15,15 +15,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupApplication()
-        createMainWindow()
+        Task { @MainActor in
+            createMainWindow()
+        }
     }
     
+    @MainActor
     private func setupApplication() {
         // Ensure app appears in dock and has menu bar
         NSApp.setActivationPolicy(.regular)
         
         // Set application name
-        ProcessInfo.processInfo.processName = "Home Assistant Voice - Local"
+        ProcessInfo.processInfo.processName = "VoiceAssistant"
         
         // Create menu bar
         setupMenuBar()
@@ -39,19 +42,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    private func setupMenuBar() {
+    @MainActor private func setupMenuBar() {
         let mainMenu = NSMenu()
         
         // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "About Home Assistant Voice - Local", action: #selector(showAbout), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "About VoiceAssistant", action: #selector(showAbout), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(NSMenuItem(title: "Hide Home Assistant Voice - Local", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        appMenu.addItem(NSMenuItem(title: "Hide VoiceAssistant", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         appMenu.addItem(NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h").withModifierMask([.command, .option]))
         appMenu.addItem(NSMenuItem(title: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(NSMenuItem(title: "Quit Home Assistant Voice - Local", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "Quit VoiceAssistant", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
         
@@ -68,15 +71,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
     
-    @objc private func showAbout() {
+    @MainActor @objc private func showAbout() {
         let aboutPanel = NSAlert()
-        aboutPanel.messageText = "Home Assistant Voice - Local"
+        aboutPanel.messageText = "VoiceAssistant"
         aboutPanel.informativeText = "Local voice assistant for Home Assistant Voice devices via USB communication.\n\nVersion 1.0\nBuilt with Swift and ESPHome"
         aboutPanel.alertStyle = .informational
         aboutPanel.runModal()
     }
     
-    private func createMainWindow() {
+    @MainActor private func createMainWindow() {
         let contentView = ContentView()
         
         window = NSWindow(
@@ -86,9 +89,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         
-        window.title = "Home Assistant Voice - Local"
+        window.title = "VoiceAssistant"
         window.center()
-        window.setFrameAutosaveName("HomeAssistantVoiceLocal")
+        window.setFrameAutosaveName("VoiceAssistant")
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
         

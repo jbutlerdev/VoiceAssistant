@@ -122,6 +122,34 @@ struct AIConfigurationView: View {
                             .foregroundColor(.secondary)
                     }
                     
+                    // Text-to-Speech Setting
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Text-to-Speech")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Toggle("Enable automatic text-to-speech for AI responses", isOn: $settingsStore.enableTextToSpeech)
+                            .toggleStyle(SwitchToggleStyle())
+                        
+                        Text("When enabled, AI responses will be automatically spoken using the system's default voice.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Think Tags Filtering Setting
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Response Filtering")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Toggle("Remove <think></think> tags from AI responses", isOn: $settingsStore.removeThinkTags)
+                            .toggleStyle(SwitchToggleStyle())
+                        
+                        Text("When enabled, any content between <think></think> tags will be automatically removed from AI responses before display.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
                     // Configuration Status
                     HStack {
                         Image(systemName: settingsStore.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill")

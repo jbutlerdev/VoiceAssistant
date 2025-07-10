@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class DeviceConfiguration: ObservableObject {
     @Published var wakeWord: String = "Okay Nabu"
     @Published var wakeWordSensitivity: String = "Moderately sensitive"
@@ -25,7 +26,9 @@ class DeviceConfiguration: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             if let status = notification.object as? DeviceStatus {
-                self?.syncWithDeviceStatus(status)
+                Task { @MainActor in
+                    self?.syncWithDeviceStatus(status)
+                }
             }
         }
         
@@ -36,7 +39,9 @@ class DeviceConfiguration: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             if let options = notification.object as? [String] {
-                self?.updateWakeWordOptions(options)
+                Task { @MainActor in
+                    self?.updateWakeWordOptions(options)
+                }
             }
         }
     }
@@ -74,14 +79,12 @@ class DeviceConfiguration: ObservableObject {
         print("Current wakeWordOptions before update: \(wakeWordOptions)")
         print("Current wakeWord before update: \(wakeWord)")
         
-        DispatchQueue.main.async {
-            self.wakeWordOptions = options
-            
-            // If current wake word is not in the new options, select the first available option
-            if !options.contains(self.wakeWord) && !options.isEmpty {
-                print("Current wake word '\(self.wakeWord)' not in options, switching to '\(options[0])'")
-                self.wakeWord = options[0]
-            }
+        wakeWordOptions = options
+        
+        // If current wake word is not in the new options, select the first available option
+        if !options.contains(wakeWord) && !options.isEmpty {
+            print("Current wake word '\(wakeWord)' not in options, switching to '\(options[0])'")
+            wakeWord = options[0]
         }
         
         print("wakeWordOptions after update: \(wakeWordOptions)")
@@ -102,7 +105,8 @@ class DeviceConfiguration: ObservableObject {
         deviceManager.sendConfiguration(config)
         
         // Clear flag after a delay to allow for device response
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             self.isApplyingConfiguration = false
             print("Configuration application completed, re-enabling sync")
         }

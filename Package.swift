@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 
 import PackageDescription
 
@@ -21,6 +21,10 @@ let package = Package(
         .package(
             url: "https://github.com/exPHAT/SwiftWhisper.git",
             branch: "master"
+        ),
+        .package(
+            url: "https://github.com/modelcontextprotocol/swift-sdk.git",
+            from: "0.9.0"
         )
     ],
     targets: [
@@ -28,7 +32,8 @@ let package = Package(
             name: "VoiceAssistantApp",
             dependencies: [
                 .product(name: "ORSSerial", package: "ORSSerialPort"),
-                .product(name: "SwiftWhisper", package: "SwiftWhisper")
+                .product(name: "SwiftWhisper", package: "SwiftWhisper"),
+                .product(name: "MCP", package: "swift-sdk")
             ],
             resources: [
                 .copy("Resources/ggml-base.bin")

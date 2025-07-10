@@ -1,12 +1,15 @@
 import Foundation
 import Combine
 
+@MainActor
 class SettingsStore: ObservableObject {
     @Published var openAIBaseURL: String = "https://api.openai.com"
     @Published var openAIAPIKey: String = ""
     @Published var openAIModel: String = "gpt-4o-mini"
     @Published var openAIMaxTokens: Int = 32768
     @Published var openAISystemPrompt: String = "You are a helpful assistant."
+    @Published var enableTextToSpeech: Bool = false
+    @Published var removeThinkTags: Bool = true
     
     private let userDefaults = UserDefaults.standard
     
@@ -16,6 +19,8 @@ class SettingsStore: ObservableObject {
     private let modelKey = "openAIModel"
     private let maxTokensKey = "openAIMaxTokens"
     private let systemPromptKey = "openAISystemPrompt"
+    private let enableTTSKey = "enableTextToSpeech"
+    private let removeThinkTagsKey = "removeThinkTags"
     
     init() {
         loadSettings()
@@ -38,6 +43,14 @@ class SettingsStore: ObservableObject {
             .store(in: &cancellables)
         
         $openAISystemPrompt
+            .sink { [weak self] _ in self?.saveSettings() }
+            .store(in: &cancellables)
+        
+        $enableTextToSpeech
+            .sink { [weak self] _ in self?.saveSettings() }
+            .store(in: &cancellables)
+        
+        $removeThinkTags
             .sink { [weak self] _ in self?.saveSettings() }
             .store(in: &cancellables)
     }
@@ -84,7 +97,21 @@ class SettingsStore: ObservableObject {
             print("No system prompt found in UserDefaults, using default: \(openAISystemPrompt)")
         }
         
-        print("Settings loaded - Base URL: \(openAIBaseURL), Model: \(openAIModel), Max Tokens: \(openAIMaxTokens), System Prompt: \(openAISystemPrompt.prefix(30))..., API Key: \(openAIAPIKey.isEmpty ? "Not set" : "Set")")
+        if userDefaults.object(forKey: enableTTSKey) != nil {
+            enableTextToSpeech = userDefaults.bool(forKey: enableTTSKey)
+            print("Loaded TTS setting: \(enableTextToSpeech)")
+        } else {
+            print("No TTS setting found in UserDefaults, using default: \(enableTextToSpeech)")
+        }
+        
+        if userDefaults.object(forKey: removeThinkTagsKey) != nil {
+            removeThinkTags = userDefaults.bool(forKey: removeThinkTagsKey)
+            print("Loaded remove think tags setting: \(removeThinkTags)")
+        } else {
+            print("No remove think tags setting found in UserDefaults, using default: \(removeThinkTags)")
+        }
+        
+        print("Settings loaded - Base URL: \(openAIBaseURL), Model: \(openAIModel), Max Tokens: \(openAIMaxTokens), System Prompt: \(openAISystemPrompt.prefix(30))..., API Key: \(openAIAPIKey.isEmpty ? "Not set" : "Set"), TTS: \(enableTextToSpeech), Remove Think Tags: \(removeThinkTags)")
     }
     
     private func saveSettings() {
@@ -94,11 +121,13 @@ class SettingsStore: ObservableObject {
         userDefaults.set(openAIModel, forKey: modelKey)
         userDefaults.set(openAIMaxTokens, forKey: maxTokensKey)
         userDefaults.set(openAISystemPrompt, forKey: systemPromptKey)
+        userDefaults.set(enableTextToSpeech, forKey: enableTTSKey)
+        userDefaults.set(removeThinkTags, forKey: removeThinkTagsKey)
         
         // Force synchronization to ensure settings are written immediately
         userDefaults.synchronize()
         
-        print("Settings saved - Base URL: \(openAIBaseURL), Model: \(openAIModel), Max Tokens: \(openAIMaxTokens), System Prompt: \(openAISystemPrompt.prefix(30))..., API Key: \(openAIAPIKey.isEmpty ? "Not set" : "Set")")
+        print("Settings saved - Base URL: \(openAIBaseURL), Model: \(openAIModel), Max Tokens: \(openAIMaxTokens), System Prompt: \(openAISystemPrompt.prefix(30))..., API Key: \(openAIAPIKey.isEmpty ? "Not set" : "Set"), TTS: \(enableTextToSpeech), Remove Think Tags: \(removeThinkTags)")
         
         // Verify settings were saved
         print("Verification - Base URL: \(userDefaults.string(forKey: baseURLKey) ?? "nil")")

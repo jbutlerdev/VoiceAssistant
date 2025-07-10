@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import ORSSerial
 
+@MainActor
 class VoiceDeviceManager: NSObject, ObservableObject {
     @Published var connectionStatus: ConnectionStatus = .disconnected
     @Published var availablePorts: [ORSSerialPort] = []
@@ -73,13 +74,13 @@ class VoiceDeviceManager: NSObject, ObservableObject {
     }
     
     @objc private func serialPortsWereConnected(_ notification: Notification) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.updateAvailablePorts()
         }
     }
     
     @objc private func serialPortsWereDisconnected(_ notification: Notification) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.updateAvailablePorts()
         }
     }
@@ -151,7 +152,8 @@ class VoiceDeviceManager: NSObject, ObservableObject {
         print("Opening serial port with settings: 115200 8N1")
         
         // Set a connection timeout - if device doesn't respond in 10 seconds, consider it failed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
             if self.connectionStatus == .connecting {
                 print("Connection timeout - device not responding")
                 self.connectionStatus = .error("Connection timeout - device not responding")
@@ -191,14 +193,18 @@ class VoiceDeviceManager: NSObject, ObservableObject {
     }
     
     private func startHeartbeat() {
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            self.sendHeartbeat()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.sendHeartbeat()
+            }
         }
     }
     
     private func startConnectionTimeout() {
-        connectionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-            self.checkConnectionHealth()
+        connectionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkConnectionHealth()
+            }
         }
     }
     
@@ -275,15 +281,16 @@ class VoiceDeviceManager: NSObject, ObservableObject {
 
 // MARK: - ORSSerialPortDelegate
 extension VoiceDeviceManager: ORSSerialPortDelegate {
-    func serialPortWasOpened(_ serialPort: ORSSerialPort) {
-        DispatchQueue.main.async {
+    nonisolated func serialPortWasOpened(_ serialPort: ORSSerialPort) {
+        Task { @MainActor in
             print("Serial port opened successfully")
             // Don't mark as connected yet - wait for device response
             self.connectionStatus = .connecting
             self.startConnectionTimeout()
             
             // Give device time to initialize, then start gentle communication
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
                 print("Starting heartbeat after device initialization delay")
                 self.startHeartbeat()
                 
@@ -291,23 +298,22 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
                 self.sendHeartbeat()
                 
                 // Check for response after delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    if self.lastHeartbeatResponse == nil {
-                        print("No heartbeat response received - device may not be running proper firmware")
-                        self.connectionStatus = .error("Device not responding - check firmware")
-                        self.disconnect()
-                    } else {
-                        print("Device responding - requesting initial data")
-                        self.connectionStatus = .connected
-                        self.requestStatus()
-                        self.requestWakeWordOptions()
-                    }
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                if self.lastHeartbeatResponse == nil {
+                    print("No heartbeat response received - device may not be running proper firmware")
+                    self.connectionStatus = .error("Device not responding - check firmware")
+                    self.disconnect()
+                } else {
+                    print("Device responding - requesting initial data")
+                    self.connectionStatus = .connected
+                    self.requestStatus()
+                    self.requestWakeWordOptions()
                 }
             }
         }
     }
     
-    func serialPort(_ serialPort: ORSSerialPort, didReceive data: Data) {
+    nonisolated func serialPort(_ serialPort: ORSSerialPort, didReceive data: Data) {
         guard let receivedString = String(data: data, encoding: .utf8) else { 
             print("Received non-UTF8 data: \(data)")
             return 
@@ -315,7 +321,7 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
         
         print("Raw received: \(receivedString.debugDescription)")
         
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.messageBuffer += receivedString
             self.processBufferedMessages()
         }
@@ -491,8 +497,8 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
         }
     }
     
-    func serialPortWasClosed(_ serialPort: ORSSerialPort) {
-        DispatchQueue.main.async {
+    nonisolated func serialPortWasClosed(_ serialPort: ORSSerialPort) {
+        Task { @MainActor in
             print("Serial port was closed")
             self.connectionStatus = .disconnected
             self.heartbeatTimer?.invalidate()
@@ -504,17 +510,18 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
         }
     }
     
-    func serialPort(_ serialPort: ORSSerialPort, didEncounterError error: Error) {
-        DispatchQueue.main.async {
+    nonisolated func serialPort(_ serialPort: ORSSerialPort, didEncounterError error: Error) {
+        Task { @MainActor in
             self.connectionStatus = .error(error.localizedDescription)
             self.lastError = error.localizedDescription
         }
     }
     
-    func serialPortWasRemovedFromSystem(_ serialPort: ORSSerialPort) {
-        DispatchQueue.main.async {
+    nonisolated func serialPortWasRemovedFromSystem(_ serialPort: ORSSerialPort) {
+        Task { @MainActor in
             self.connectionStatus = .disconnected
-            if self.serialPort == serialPort {
+            // Just disconnect if we have any serial port
+            if self.serialPort != nil {
                 self.disconnect()
             }
         }
@@ -542,7 +549,8 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
             stt.stopRecording()
             // The STT manager will handle the complete transcription
             // For now, still send echo response - later this would be processed by AI
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
                 self.sendEchoResponse()
             }
         } else {
@@ -559,22 +567,48 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
             return
         }
         
-        // Convert Int array to Int16 array - ESP32 might be sending different format
-        let audioSamples = samples.compactMap { sample -> Int16? in
-            // Validate sample range - Int16 valid range is -32768 to 32767
+        // Convert Int array to Int16 array - Handle ESP32 audio format properly
+        let audioSamples = samples.map { sample -> Int16 in
+            // Convert and scale if ESP32 is sending in different bit depth
+            let clampedSample: Int
+            
+            // Check if samples are coming in a different format (like 24-bit or 32-bit)
             if sample < Int(Int16.min) || sample > Int(Int16.max) {
-                print("STT WARNING: Sample out of Int16 range: \(sample), clamping")
-                return Int16(clamping: sample)
+                // Scale down if samples are in higher bit depth
+                if sample > 32767 || sample < -32768 {
+                    // Assume 24-bit or 32-bit samples, scale down properly
+                    clampedSample = sample / (sample > 65535 ? 256 : 1) // Scale from 24-bit to 16-bit
+                } else {
+                    clampedSample = sample
+                }
+            } else {
+                clampedSample = sample
             }
-            return Int16(sample)
+            
+            return Int16(clamping: clampedSample)
         }
         audioBuffer.append(audioSamples)
         
-        // Debug first chunk to see sample values
+        // Debug first chunk to see sample values and analyze noise
         if audioBuffer.count == 1 {
-            let sampleValues = audioSamples.prefix(10).map { String($0) }.joined(separator: ", ")
+            let sampleValues = audioSamples.prefix(20).map { String($0) }.joined(separator: ", ")
             print("First audio chunk sample values: [\(sampleValues)]...")
-            print("Raw int values: [\(samples.prefix(10).map { String($0) }.joined(separator: ", "))]...")
+            print("Raw int values: [\(samples.prefix(20).map { String($0) }.joined(separator: ", "))]...")
+            
+            // Check for static pattern in raw samples
+            let maxSample = audioSamples.map { abs($0) }.max() ?? 0
+            let avgSample = audioSamples.reduce(0) { $0 + abs(Int($1)) } / audioSamples.count
+            print("First chunk stats - Max: \(maxSample), Avg: \(avgSample)")
+            
+            // Check if samples alternate rapidly (sign of digital noise)
+            var signChanges = 0
+            for i in 1..<min(100, audioSamples.count) {
+                if (audioSamples[i-1] < 0 && audioSamples[i] >= 0) ||
+                   (audioSamples[i-1] >= 0 && audioSamples[i] < 0) {
+                    signChanges += 1
+                }
+            }
+            print("Sign changes in first 100 samples: \(signChanges) (high values indicate noise)")
         }
         
         // Send to STT manager for streaming transcription
@@ -586,11 +620,10 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
     private func sendEchoResponse() {
         print("Sending echo response back to device")
         
-        // First, ensure device is unmuted and volume is high
+        // First, ensure device is unmuted (without changing volume)
         let unmuteMessage: [String: Any] = [
             "type": "config",
             "unmute": true,
-            "volume": 0.85,
             "timestamp": Int(Date().timeIntervalSince1970 * 1000)
         ]
         
@@ -598,7 +631,7 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
             let jsonData = try JSONSerialization.data(withJSONObject: unmuteMessage)
             if var jsonString = String(data: jsonData, encoding: .utf8) {
                 jsonString += "\n"
-                print("Sending unmute/volume command (\(jsonString.count) bytes)")
+                print("Sending unmute command (\(jsonString.count) bytes)")
                 sendMessage(jsonString)
             }
         } catch {
@@ -606,7 +639,8 @@ extension VoiceDeviceManager: ORSSerialPortDelegate {
         }
         
         // Wait a moment, then send the tone
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             let audioMessage: [String: Any] = [
                 "type": "play_tone",
                 "frequency": 880,
