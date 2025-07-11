@@ -574,37 +574,54 @@ class OpenAIService: ObservableObject {
             print("Request Body: \(bodyString)")
         }
         
-        // Make the API call using basic URLSession (bypassing problematic Combine pipeline)
-        URLSession.shared.dataTask(with: urlRequest) { [weak self] data, response, error in
+        // Make the API call with retry logic
+        performAPICallWithRetry(request: urlRequest, chatRequest: request, maxRetries: 3)
+    }
+    
+    private func performAPICallWithRetry(request: URLRequest, chatRequest: ChatRequest, maxRetries: Int, currentAttempt: Int = 1) {
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             Task { @MainActor in
                 guard let self = self else { return }
                 
-                // Remove from active requests
-                self.activeRequests.removeAll { $0.id == request.id }
+                // Check if we should retry
+                let shouldRetry = self.shouldRetryRequest(data: data, response: response, error: error, attempt: currentAttempt, maxRetries: maxRetries)
+                
+                if shouldRetry {
+                    let delay = self.calculateRetryDelay(attempt: currentAttempt)
+                    print("OpenAI: Retrying request [\(chatRequest.id)] in \(delay)s (attempt \(currentAttempt + 1)/\(maxRetries + 1))")
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        self.performAPICallWithRetry(request: request, chatRequest: chatRequest, maxRetries: maxRetries, currentAttempt: currentAttempt + 1)
+                    }
+                    return
+                }
+                
+                // Remove from active requests (final attempt or success)
+                self.activeRequests.removeAll { $0.id == chatRequest.id }
                 
                 // Update legacy isProcessing
                 self.isProcessing = !self.activeRequests.isEmpty
                 
                 if let error = error {
-                    print("OpenAI Network Error [\(request.id)]: \(error)")
-                    self.updateResponseWithError(requestId: request.id, error: error.localizedDescription)
+                    print("OpenAI Network Error [\(chatRequest.id)]: \(error)")
+                    self.updateResponseWithError(requestId: chatRequest.id, error: error.localizedDescription)
                     return
                 }
                 
                 guard let data = data, let httpResponse = response as? HTTPURLResponse else {
-                    self.updateResponseWithError(requestId: request.id, error: "Invalid response")
+                    self.updateResponseWithError(requestId: chatRequest.id, error: "Invalid response")
                     return
                 }
                 
-                print("HTTP Status Code [\(request.id)]: \(httpResponse.statusCode)")
+                print("HTTP Status Code [\(chatRequest.id)]: \(httpResponse.statusCode)")
                 
                 if httpResponse.statusCode >= 400 {
                     // Try to decode error response
                     do {
                         let errorResponse = try JSONDecoder().decode(OpenAIError.self, from: data)
-                        self.updateResponseWithError(requestId: request.id, error: errorResponse.error.message)
+                        self.updateResponseWithError(requestId: chatRequest.id, error: errorResponse.error.message)
                     } catch {
-                        self.updateResponseWithError(requestId: request.id, error: "HTTP \(httpResponse.statusCode) error")
+                        self.updateResponseWithError(requestId: chatRequest.id, error: "HTTP \(httpResponse.statusCode) error")
                     }
                     return
                 }
@@ -613,7 +630,7 @@ class OpenAIService: ObservableObject {
                 do {
                     let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
                     
-                    print("OpenAI API Response [\(request.id)]:")
+                    print("OpenAI API Response [\(chatRequest.id)]:")
                     print("ID: \(openAIResponse.id)")
                     print("Model: \(openAIResponse.model)")
                     print("Choices: \(openAIResponse.choices.count)")
@@ -623,16 +640,69 @@ class OpenAIService: ObservableObject {
                     }
                     
                     if let firstChoice = openAIResponse.choices.first {
-                        await self.handleConcurrentOpenAIResponse(choice: firstChoice, request: request)
+                        await self.handleConcurrentOpenAIResponse(choice: firstChoice, request: chatRequest)
                     } else {
-                        self.updateResponseWithError(requestId: request.id, error: "No response choices returned")
+                        self.updateResponseWithError(requestId: chatRequest.id, error: "No response choices returned")
                     }
                 } catch {
-                    print("JSON parsing error [\(request.id)]: \(error)")
-                    self.updateResponseWithError(requestId: request.id, error: "Failed to parse response: \(error.localizedDescription)")
+                    print("JSON parsing error [\(chatRequest.id)]: \(error)")
+                    self.updateResponseWithError(requestId: chatRequest.id, error: "Failed to parse response: \(error.localizedDescription)")
                 }
             }
         }.resume()
+    }
+    
+    private func shouldRetryRequest(data: Data?, response: URLResponse?, error: Error?, attempt: Int, maxRetries: Int) -> Bool {
+        // Don't retry if we've exceeded max attempts
+        guard attempt <= maxRetries else { return false }
+        
+        // Check for network connection errors
+        if let error = error as NSError? {
+            // Network connection lost or other network errors
+            if error.domain == NSURLErrorDomain {
+                switch error.code {
+                case NSURLErrorNetworkConnectionLost,
+                     NSURLErrorTimedOut,
+                     NSURLErrorCannotConnectToHost,
+                     NSURLErrorCannotFindHost,
+                     NSURLErrorDNSLookupFailed,
+                     NSURLErrorNotConnectedToInternet:
+                    print("OpenAI: Network error detected (code: \(error.code)) - will retry")
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+        
+        // Check for 503 Service Unavailable or other server errors
+        if let httpResponse = response as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 503, // Service Unavailable
+                 502, // Bad Gateway
+                 504: // Gateway Timeout
+                print("OpenAI: Server error \(httpResponse.statusCode) - will retry")
+                return true
+            case 429: // Rate limiting
+                print("OpenAI: Rate limited (429) - will retry")
+                return true
+            default:
+                break
+            }
+        }
+        
+        return false
+    }
+    
+    private func calculateRetryDelay(attempt: Int) -> TimeInterval {
+        // Exponential backoff: 1s, 2s, 4s, 8s...
+        let baseDelay = 1.0
+        let maxDelay = 8.0
+        let delay = min(baseDelay * pow(2.0, Double(attempt - 1)), maxDelay)
+        
+        // Add some jitter to avoid thundering herd
+        let jitter = Double.random(in: 0.1...0.3)
+        return delay + jitter
     }
     
     func clearResponse() {

@@ -52,8 +52,6 @@ class CustomToolManager: ObservableObject {
             throw CustomToolError.toolNotFound(name)
         }
         
-        print("CustomTool: Executing tool '\(name)' with arguments: \(arguments)")
-        
         // Prepare the command with arguments
         var command = tool.command
         
@@ -66,18 +64,23 @@ class CustomToolManager: ObservableObject {
                 "{\(argName)}"
             ]
             
-            let replacement = String(describing: argValue)
+            // Properly handle string arguments by escaping them for shell
+            let replacement: String
+            if let stringValue = argValue as? String {
+                // Escape single quotes and wrap in single quotes for shell safety
+                replacement = "'\(stringValue.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+            } else {
+                replacement = String(describing: argValue)
+            }
             
             for placeholder in placeholders {
                 let newCommand = command.replacingOccurrences(of: placeholder, with: replacement)
                 if newCommand != command {
                     command = newCommand
-                    print("CustomTool: Replaced '\(placeholder)' with '\(replacement)'")
+                    break // Found and replaced, move to next argument
                 }
             }
         }
-        
-        print("CustomTool: Final command: \(command)")
         
         // Set up the process
         let process = Process()
