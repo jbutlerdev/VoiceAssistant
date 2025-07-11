@@ -20,9 +20,16 @@ class MCPManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     private let storageKey = "MCPServerConfigs"
+    private var customToolManager: CustomToolManager?
     
     init() {
         loadServers()
+    }
+    
+    // MARK: - Custom Tool Manager
+    
+    func setCustomToolManager(_ manager: CustomToolManager) {
+        self.customToolManager = manager
     }
     
     // MARK: - Server Management
@@ -412,6 +419,10 @@ class MCPManager: ObservableObject {
         return enabledTools
     }
     
+    func getAllEnabledCustomTools() -> [CustomToolConfig] {
+        return customToolManager?.getEnabledTools() ?? []
+    }
+    
     // MARK: - Tool Execution
     
     func executeTool(serverId: UUID, toolName: String, arguments: [String: Any]) async throws -> Any {
@@ -462,6 +473,14 @@ class MCPManager: ObservableObject {
             print("MCP: Tool execution failed: \(error)")
             throw MCPError.executionFailed(error.localizedDescription)
         }
+    }
+    
+    func executeCustomTool(name: String, arguments: [String: Any]) async throws -> String {
+        guard let customToolManager = customToolManager else {
+            throw MCPError.executionFailed("Custom tool manager not configured")
+        }
+        
+        return try await customToolManager.executeCustomTool(name: name, arguments: arguments)
     }
     
     // MARK: - Helpers

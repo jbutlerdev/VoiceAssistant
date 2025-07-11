@@ -170,11 +170,11 @@ struct TranscriptionView: View {
                     .frame(height: geometry.size.height * 0.6)
                     
                     // Auto-send status
-                    if openAIService.isProcessing {
+                    if openAIService.isProcessing || !openAIService.activeRequests.isEmpty {
                         HStack {
                             ProgressView()
                                 .scaleEffect(0.8)
-                            Text("Processing AI response...")
+                            Text("Processing \(openAIService.activeRequests.count) AI request(s)...")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             Spacer()
@@ -225,8 +225,9 @@ struct TranscriptionView: View {
             print("STT: OpenAI processing: \(openAIService.isProcessing)")
             print("STT: Is transcribing: \(sttManager.isTranscribing)")
             
-            // Only auto-send to AI when transcription is complete (not while actively transcribing)
-            if settingsStore.isConfigured && !newText.isEmpty && !openAIService.isProcessing && !sttManager.isTranscribing {
+            // Auto-send to AI when transcription is complete (not while actively transcribing)
+            // Removed the isProcessing check to allow concurrent requests
+            if settingsStore.isConfigured && !newText.isEmpty && !sttManager.isTranscribing {
                 print("STT: Transcription complete, sending to AI: \"\(newText)\"")
                 openAIService.sendMessage(
                     newText,
@@ -237,7 +238,7 @@ struct TranscriptionView: View {
                     systemPrompt: settingsStore.openAISystemPrompt
                 )
             } else {
-                print("STT: Not auto-sending - configured: \(settingsStore.isConfigured), empty: \(newText.isEmpty), processing: \(openAIService.isProcessing), transcribing: \(sttManager.isTranscribing)")
+                print("STT: Not auto-sending - configured: \(settingsStore.isConfigured), empty: \(newText.isEmpty), transcribing: \(sttManager.isTranscribing)")
             }
         }
     }

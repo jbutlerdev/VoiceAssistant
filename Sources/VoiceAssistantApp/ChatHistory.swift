@@ -1,5 +1,34 @@
 import Foundation
 
+struct ToolCallHistoryItem: Codable, Identifiable {
+    let id: UUID
+    let toolName: String
+    let arguments: String
+    let result: String
+    let timestamp: Date
+    
+    init(id: UUID = UUID(),
+         toolName: String,
+         arguments: String,
+         result: String,
+         timestamp: Date = Date()) {
+        self.id = id
+        self.toolName = toolName
+        self.arguments = arguments
+        self.result = result
+        self.timestamp = timestamp
+    }
+    
+    // Convert from ToolCallDisplay
+    init(from toolCallDisplay: ToolCallDisplay) {
+        self.id = toolCallDisplay.id
+        self.toolName = toolCallDisplay.toolName
+        self.arguments = toolCallDisplay.arguments
+        self.result = toolCallDisplay.result
+        self.timestamp = toolCallDisplay.timestamp
+    }
+}
+
 struct ChatHistoryItem: Codable, Identifiable {
     let id: UUID
     let timestamp: Date
@@ -8,6 +37,7 @@ struct ChatHistoryItem: Codable, Identifiable {
     let aiResponse: String
     let audioSampleRate: Double
     let audioDuration: TimeInterval
+    let toolCalls: [ToolCallHistoryItem] // Store tool call information
     
     init(id: UUID = UUID(),
          timestamp: Date = Date(),
@@ -15,7 +45,8 @@ struct ChatHistoryItem: Codable, Identifiable {
          transcription: String,
          aiResponse: String,
          audioSampleRate: Double = 16000.0,
-         audioDuration: TimeInterval = 0) {
+         audioDuration: TimeInterval = 0,
+         toolCalls: [ToolCallHistoryItem] = []) {
         self.id = id
         self.timestamp = timestamp
         self.recordedAudio = recordedAudio
@@ -23,6 +54,7 @@ struct ChatHistoryItem: Codable, Identifiable {
         self.aiResponse = aiResponse
         self.audioSampleRate = audioSampleRate
         self.audioDuration = audioDuration
+        self.toolCalls = toolCalls
     }
     
     var formattedDate: String {
