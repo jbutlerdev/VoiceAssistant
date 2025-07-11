@@ -184,17 +184,10 @@ struct AIResponseView: View {
             }
         }
         .onChange(of: openAIService.lastResponse) { newResponse in
-            // Handle both TTS and history saving when a new response is received (legacy)
+            // Handle history saving only - TTS is handled by responseQueue
             if !newResponse.isEmpty && !openAIService.isProcessing {
-                // Trigger TTS if enabled
-                if settingsStore.enableTextToSpeech && 
-                   newResponse != lastSpokenResponse {
-                    ttsManager.speak(newResponse)
-                    lastSpokenResponse = newResponse
-                }
-                
-                // Save to history
-                if !sttManager.transcriptionText.isEmpty && !sttManager.lastCapturedAudio.isEmpty {
+                // Only save to history if using legacy single response mode
+                if openAIService.chatResponses.isEmpty && !sttManager.transcriptionText.isEmpty && !sttManager.lastCapturedAudio.isEmpty {
                     historyManager.addChat(
                         recordedAudio: sttManager.lastCapturedAudio,
                         transcription: sttManager.transcriptionText,
