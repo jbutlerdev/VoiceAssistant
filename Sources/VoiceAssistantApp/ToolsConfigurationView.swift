@@ -432,7 +432,7 @@ struct CustomToolEditSheet: View {
                             }
                         }
                         
-                        Text("Use {{argumentName}} in your command to reference arguments")
+                        Text("Use {{argumentName}} in your command to reference arguments (e.g., echo {{message}})")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -514,13 +514,16 @@ struct CustomToolEditSheet: View {
                         
                         VStack(alignment: .leading, spacing: 8) {
                             Group {
-                                Text("Simple command:")
+                                Text("Simple command with argument:")
                                     .font(.caption)
                                     .fontWeight(.semibold)
                                 Text("ls -la {{path}}")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .font(.system(.body, design: .monospaced))
+                                Text("Arguments: path (string)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
                             }
                             
                             Divider()

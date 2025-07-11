@@ -52,14 +52,32 @@ class CustomToolManager: ObservableObject {
             throw CustomToolError.toolNotFound(name)
         }
         
+        print("CustomTool: Executing tool '\(name)' with arguments: \(arguments)")
+        
         // Prepare the command with arguments
         var command = tool.command
         
         // Replace argument placeholders in the command
         for (argName, argValue) in arguments {
-            let placeholder = "{{\(argName)}}"
-            command = command.replacingOccurrences(of: placeholder, with: String(describing: argValue))
+            // Try both with and without spaces
+            let placeholders = [
+                "{{\(argName)}}",
+                "{{ \(argName) }}",
+                "{\(argName)}"
+            ]
+            
+            let replacement = String(describing: argValue)
+            
+            for placeholder in placeholders {
+                let newCommand = command.replacingOccurrences(of: placeholder, with: replacement)
+                if newCommand != command {
+                    command = newCommand
+                    print("CustomTool: Replaced '\(placeholder)' with '\(replacement)'")
+                }
+            }
         }
+        
+        print("CustomTool: Final command: \(command)")
         
         // Set up the process
         let process = Process()
