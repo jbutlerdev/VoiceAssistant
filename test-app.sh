@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Testing Home Assistant Voice - Local App"
+echo "Voice Assistant"
 echo "========================================"
 
 # Build the app

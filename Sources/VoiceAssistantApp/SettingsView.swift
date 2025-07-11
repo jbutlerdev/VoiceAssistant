@@ -91,7 +91,7 @@ struct SettingsView: View {
                     .padding(.bottom, 10)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Home Assistant Voice - Local")
+                    Text("Voice Assistant")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     
