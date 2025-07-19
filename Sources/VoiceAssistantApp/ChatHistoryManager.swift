@@ -59,16 +59,20 @@ class ChatHistoryManager: ObservableObject {
     
     // MARK: - CRUD Operations
     
-    func addChat(recordedAudio: [Float], transcription: String, aiResponse: String, sampleRate: Double = 16000.0) {
+    func addChat(recordedAudio: [Float], transcription: String, aiResponse: String, sampleRate: Double = 16000.0, toolCalls: [ToolCallDisplay] = []) {
         let duration = Double(recordedAudio.count) / sampleRate
         let audioData = recordedAudio.audioData
+        
+        // Convert tool calls to history items
+        let toolCallHistoryItems = toolCalls.map { ToolCallHistoryItem(from: $0) }
         
         let newChat = ChatHistoryItem(
             recordedAudio: audioData,
             transcription: transcription,
             aiResponse: aiResponse,
             audioSampleRate: sampleRate,
-            audioDuration: duration
+            audioDuration: duration,
+            toolCalls: toolCallHistoryItems
         )
         
         // Insert at beginning (most recent first)

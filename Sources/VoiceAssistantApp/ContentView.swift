@@ -47,9 +47,9 @@ struct ContentView: View {
                 }
                 .tag(3)
             
-            MCPConfigurationView(mcpManager: mcpManager)
+            ToolsConfigurationView(mcpManager: mcpManager)
                 .tabItem {
-                    Label("MCP", systemImage: "server.rack")
+                    Label("Tools", systemImage: "wrench.and.screwdriver")
                 }
                 .tag(4)
             

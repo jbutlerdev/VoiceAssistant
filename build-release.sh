@@ -55,9 +55,9 @@ cat > "${BUNDLE_NAME}/Contents/Info.plist" << 'EOF'
     <key>CFBundleIdentifier</key>
     <string>com.homeassistant.voice.local</string>
     <key>CFBundleName</key>
-    <string>Home Assistant Voice - Local</string>
+    <string>Voice Assistant</string>
     <key>CFBundleDisplayName</key>
-    <string>Home Assistant Voice - Local</string>
+    <string>Voice Assistant</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -295,14 +295,66 @@ struct ToolCallDisplay: Identifiable {
     let timestamp: Date
 }
 
+// MARK: - Chat Request/Response Models
+
+struct ChatRequest: Identifiable {
+    let id = UUID()
+    let message: String
+    let timestamp: Date
+    let baseURL: String
+    let apiKey: String
+    let model: String
+    let maxTokens: Int
+    let systemPrompt: String
+    let removeThinkTags: Bool
+    
+    init(message: String, baseURL: String, apiKey: String, model: String, maxTokens: Int = 32768, systemPrompt: String = "You are a helpful assistant.", removeThinkTags: Bool = true) {
+        self.message = message
+        self.timestamp = Date()
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+        self.model = model
+        self.maxTokens = maxTokens
+        self.systemPrompt = systemPrompt
+        self.removeThinkTags = removeThinkTags
+    }
+}
+
+struct ChatResponse: Identifiable {
+    let id = UUID()
+    let requestId: UUID
+    let message: String
+    let response: String?
+    let error: String?
+    let toolCalls: [ToolCallDisplay]
+    let timestamp: Date
+    let isProcessing: Bool
+    
+    init(requestId: UUID, message: String, response: String? = nil, error: String? = nil, toolCalls: [ToolCallDisplay] = [], isProcessing: Bool = false) {
+        self.requestId = requestId
+        self.message = message
+        self.response = response
+        self.error = error
+        self.toolCalls = toolCalls
+        self.timestamp = Date()
+        self.isProcessing = isProcessing
+    }
+}
+
 // MARK: - OpenAI Service
 @MainActor
 class OpenAIService: ObservableObject {
+    // Legacy properties for backward compatibility
     @Published var lastResponse: String = ""
     @Published var lastError: String?
     @Published var isProcessing: Bool = false
     @Published var hasRequestedNetworkAccess: Bool = false
     @Published var currentToolCalls: [ToolCallDisplay] = []
+    
+    // New concurrent chat properties
+    @Published var activeRequests: [ChatRequest] = []
+    @Published var chatResponses: [ChatResponse] = []
+    @Published var responseQueue: [ChatResponse] = [] // Queue for TTS
     
     private var cancellables = Set<AnyCancellable>()
     private let logger = Logger(subsystem: "com.voiceassistant.app", category: "LocalNetworkAuth")
@@ -423,39 +475,72 @@ class OpenAIService: ObservableObject {
     }
     
     func sendMessage(_ message: String, baseURL: String, apiKey: String, model: String, maxTokens: Int = 32768, systemPrompt: String = "You are a helpful assistant.", removeThinkTags: Bool = true) {
-        guard !baseURL.isEmpty, !apiKey.isEmpty, !model.isEmpty else {
-            lastError = "OpenAI configuration is incomplete"
+        // Create new concurrent request
+        let request = ChatRequest(
+            message: message,
+            baseURL: baseURL,
+            apiKey: apiKey,
+            model: model,
+            maxTokens: maxTokens,
+            systemPrompt: systemPrompt,
+            removeThinkTags: removeThinkTags
+        )
+        
+        sendConcurrentMessage(request)
+    }
+    
+    func sendConcurrentMessage(_ request: ChatRequest) {
+        guard !request.baseURL.isEmpty, !request.apiKey.isEmpty, !request.model.isEmpty else {
+            let errorResponse = ChatResponse(
+                requestId: request.id,
+                message: request.message,
+                error: "OpenAI configuration is incomplete"
+            )
+            chatResponses.append(errorResponse)
             return
         }
         
-        isProcessing = true
-        lastError = nil
-        currentToolCalls = [] // Clear previous tool calls
+        // Add to active requests
+        activeRequests.append(request)
+        
+        // Create initial processing response
+        let processingResponse = ChatResponse(
+            requestId: request.id,
+            message: request.message,
+            isProcessing: true
+        )
+        chatResponses.append(processingResponse)
+        
+        // Update legacy properties for backward compatibility
+        if chatResponses.count == 1 {
+            isProcessing = true
+            lastError = nil
+            currentToolCalls = []
+        }
         
         // Construct the full URL
-        let fullURL = baseURL.hasSuffix("/") ? baseURL + "v1/chat/completions" : baseURL + "/v1/chat/completions"
+        let fullURL = request.baseURL.hasSuffix("/") ? request.baseURL + "v1/chat/completions" : request.baseURL + "/v1/chat/completions"
         
         guard let url = URL(string: fullURL) else {
-            lastError = "Invalid base URL"
-            isProcessing = false
+            updateResponseWithError(requestId: request.id, error: "Invalid base URL")
             return
         }
         
         // Create enhanced system prompt with MCP tools
-        let enhancedSystemPrompt = createEnhancedSystemPrompt(basePrompt: systemPrompt)
+        let enhancedSystemPrompt = createEnhancedSystemPrompt(basePrompt: request.systemPrompt)
         
         // Get available MCP tools
         let tools = convertMCPToolsToOpenAI()
         
         // Create the request payload
-        let request = OpenAIRequest(
-            model: model,
+        let openAIRequest = OpenAIRequest(
+            model: request.model,
             messages: [
                 OpenAIMessage(role: "system", content: enhancedSystemPrompt),
-                OpenAIMessage(role: "user", content: message)
+                OpenAIMessage(role: "user", content: request.message)
             ],
             temperature: 0.7,
-            maxTokens: maxTokens,
+            maxTokens: request.maxTokens,
             topP: 1.0,
             frequencyPenalty: 0.0,
             presencePenalty: 0.0,
@@ -467,21 +552,20 @@ class OpenAIService: ObservableObject {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("Bearer \(request.apiKey)", forHTTPHeaderField: "Authorization")
         
         do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
+            urlRequest.httpBody = try JSONEncoder().encode(openAIRequest)
         } catch {
-            lastError = "Failed to encode request: \(error.localizedDescription)"
-            isProcessing = false
+            updateResponseWithError(requestId: request.id, error: "Failed to encode request: \(error.localizedDescription)")
             return
         }
         
         // Log the API call details
-        print("OpenAI API Call:")
+        print("OpenAI API Call [\(request.id)]:")
         print("URL: \(fullURL)")
-        print("Model: \(model)")
-        print("Message: \"\(message)\"")
+        print("Model: \(request.model)")
+        print("Message: \"\(request.message)\"")
         print("Headers: \(urlRequest.allHTTPHeaderFields ?? [:])")
         
         // Log request body (for debugging)
@@ -490,33 +574,54 @@ class OpenAIService: ObservableObject {
             print("Request Body: \(bodyString)")
         }
         
-        // Make the API call using basic URLSession (bypassing problematic Combine pipeline)
-        URLSession.shared.dataTask(with: urlRequest) { [weak self] data, response, error in
+        // Make the API call with retry logic
+        performAPICallWithRetry(request: urlRequest, chatRequest: request, maxRetries: 3)
+    }
+    
+    private func performAPICallWithRetry(request: URLRequest, chatRequest: ChatRequest, maxRetries: Int, currentAttempt: Int = 1) {
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             Task { @MainActor in
                 guard let self = self else { return }
                 
-                self.isProcessing = false
+                // Check if we should retry
+                let shouldRetry = self.shouldRetryRequest(data: data, response: response, error: error, attempt: currentAttempt, maxRetries: maxRetries)
+                
+                if shouldRetry {
+                    let delay = self.calculateRetryDelay(attempt: currentAttempt)
+                    print("OpenAI: Retrying request [\(chatRequest.id)] in \(delay)s (attempt \(currentAttempt + 1)/\(maxRetries + 1))")
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        self.performAPICallWithRetry(request: request, chatRequest: chatRequest, maxRetries: maxRetries, currentAttempt: currentAttempt + 1)
+                    }
+                    return
+                }
+                
+                // Remove from active requests (final attempt or success)
+                self.activeRequests.removeAll { $0.id == chatRequest.id }
+                
+                // Update legacy isProcessing
+                self.isProcessing = !self.activeRequests.isEmpty
                 
                 if let error = error {
-                    print("OpenAI Network Error: \(error)")
-                    self.lastError = error.localizedDescription
+                    print("OpenAI Network Error [\(chatRequest.id)]: \(error)")
+                    self.updateResponseWithError(requestId: chatRequest.id, error: error.localizedDescription)
                     return
                 }
                 
                 guard let data = data, let httpResponse = response as? HTTPURLResponse else {
-                    self.lastError = "Invalid response"
+                    self.updateResponseWithError(requestId: chatRequest.id, error: "Invalid response")
                     return
                 }
                 
-                print("HTTP Status Code: \(httpResponse.statusCode)")
+                print("HTTP Status Code [\(chatRequest.id)]: \(httpResponse.statusCode)")
                 
                 if httpResponse.statusCode >= 400 {
                     // Try to decode error response
                     do {
                         let errorResponse = try JSONDecoder().decode(OpenAIError.self, from: data)
-                        self.lastError = errorResponse.error.message
+                        self.updateResponseWithError(requestId: chatRequest.id, error: errorResponse.error.message)
                     } catch {
-                        self.lastError = "HTTP \(httpResponse.statusCode) error"
+                        self.updateResponseWithError(requestId: chatRequest.id, error: "HTTP \(httpResponse.statusCode) error")
                     }
                     return
                 }
@@ -525,7 +630,7 @@ class OpenAIService: ObservableObject {
                 do {
                     let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
                     
-                    print("OpenAI API Response:")
+                    print("OpenAI API Response [\(chatRequest.id)]:")
                     print("ID: \(openAIResponse.id)")
                     print("Model: \(openAIResponse.model)")
                     print("Choices: \(openAIResponse.choices.count)")
@@ -535,22 +640,87 @@ class OpenAIService: ObservableObject {
                     }
                     
                     if let firstChoice = openAIResponse.choices.first {
-                        await self.handleOpenAIResponse(choice: firstChoice, originalMessage: message, baseURL: baseURL, model: model, apiKey: apiKey, systemPrompt: systemPrompt, removeThinkTags: removeThinkTags)
+                        await self.handleConcurrentOpenAIResponse(choice: firstChoice, request: chatRequest)
                     } else {
-                        self.lastError = "No response choices returned"
+                        self.updateResponseWithError(requestId: chatRequest.id, error: "No response choices returned")
                     }
                 } catch {
-                    print("JSON parsing error: \(error)")
-                    self.lastError = "Failed to parse response: \(error.localizedDescription)"
+                    print("JSON parsing error [\(chatRequest.id)]: \(error)")
+                    self.updateResponseWithError(requestId: chatRequest.id, error: "Failed to parse response: \(error.localizedDescription)")
                 }
             }
         }.resume()
+    }
+    
+    private func shouldRetryRequest(data: Data?, response: URLResponse?, error: Error?, attempt: Int, maxRetries: Int) -> Bool {
+        // Don't retry if we've exceeded max attempts
+        guard attempt <= maxRetries else { return false }
+        
+        // Check for network connection errors
+        if let error = error as NSError? {
+            // Network connection lost or other network errors
+            if error.domain == NSURLErrorDomain {
+                switch error.code {
+                case NSURLErrorNetworkConnectionLost,
+                     NSURLErrorTimedOut,
+                     NSURLErrorCannotConnectToHost,
+                     NSURLErrorCannotFindHost,
+                     NSURLErrorDNSLookupFailed,
+                     NSURLErrorNotConnectedToInternet:
+                    print("OpenAI: Network error detected (code: \(error.code)) - will retry")
+                    return true
+                default:
+                    break
+                }
+            }
+        }
+        
+        // Check for 503 Service Unavailable or other server errors
+        if let httpResponse = response as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 503, // Service Unavailable
+                 502, // Bad Gateway
+                 504: // Gateway Timeout
+                print("OpenAI: Server error \(httpResponse.statusCode) - will retry")
+                return true
+            case 429: // Rate limiting
+                print("OpenAI: Rate limited (429) - will retry")
+                return true
+            default:
+                break
+            }
+        }
+        
+        return false
+    }
+    
+    private func calculateRetryDelay(attempt: Int) -> TimeInterval {
+        // Exponential backoff: 1s, 2s, 4s, 8s...
+        let baseDelay = 1.0
+        let maxDelay = 8.0
+        let delay = min(baseDelay * pow(2.0, Double(attempt - 1)), maxDelay)
+        
+        // Add some jitter to avoid thundering herd
+        let jitter = Double.random(in: 0.1...0.3)
+        return delay + jitter
     }
     
     func clearResponse() {
         lastResponse = ""
         lastError = nil
         currentToolCalls = []
+    }
+    
+    func clearAllResponses() {
+        activeRequests.removeAll()
+        chatResponses.removeAll()
+        responseQueue.removeAll()
+        clearResponse()
+    }
+    
+    func removeResponse(id: UUID) {
+        chatResponses.removeAll { $0.id == id }
+        responseQueue.removeAll { $0.id == id }
     }
     
     // Request network access permission - this will trigger the system dialog
@@ -722,13 +892,15 @@ class OpenAIService: ObservableObject {
         }
         
         let enabledTools = mcpManager.getAllEnabledTools()
+        let customTools = mcpManager.getAllEnabledCustomTools()
         
-        if enabledTools.isEmpty {
+        if enabledTools.isEmpty && customTools.isEmpty {
             return basePrompt
         }
         
         var toolDescriptions: [String] = []
         
+        // Add MCP tools
         for (server, tool) in enabledTools {
             var toolDesc = "- **\(tool.id)** (from \(server.name))"
             if let description = tool.description {
@@ -737,25 +909,32 @@ class OpenAIService: ObservableObject {
             toolDescriptions.append(toolDesc)
         }
         
-        let mcpSection = """
+        // Add custom tools
+        for tool in customTools {
+            toolDescriptions.append("- **\(tool.name)** (custom tool): \(tool.description)")
+        }
+        
+        let toolsSection = """
         
         ## Available Tools
-        You have access to the following MCP tools that can help you perform actions and retrieve information:
+        You have access to the following tools that can help you perform actions and retrieve information:
         
         \(toolDescriptions.joined(separator: "\n"))
         
         These tools are fully active and ready to use. When a user request would benefit from using these tools, you can call them directly without asking for permission. The tools will be executed automatically and their results will be provided to you for crafting a natural response to the user.
         """
         
-        return basePrompt + mcpSection
+        return basePrompt + toolsSection
     }
     
     private func convertMCPToolsToOpenAI() -> [OpenAITool] {
         guard let mcpManager = mcpManager else { return [] }
         
-        let enabledTools = mcpManager.getAllEnabledTools()
+        var allTools: [OpenAITool] = []
         
-        return enabledTools.map { (server, tool) in
+        // Add MCP tools
+        let enabledTools = mcpManager.getAllEnabledTools()
+        let mcpTools = enabledTools.map { (server, tool) in
             // Create function name by prefixing with server name to avoid conflicts
             let functionName = "\(server.name)_\(tool.id)"
             
@@ -778,6 +957,14 @@ class OpenAIService: ObservableObject {
             
             return OpenAITool(function: function)
         }
+        allTools.append(contentsOf: mcpTools)
+        
+        // Add custom tools
+        let customTools = mcpManager.getAllEnabledCustomTools()
+        let customOpenAITools = customTools.map { $0.toOpenAITool() }
+        allTools.append(contentsOf: customOpenAITools)
+        
+        return allTools
     }
     
     private func handleOpenAIResponse(choice: OpenAIChoice, originalMessage: String, baseURL: String, model: String, apiKey: String, systemPrompt: String, removeThinkTags: Bool = true) async {
@@ -831,8 +1018,27 @@ class OpenAIService: ObservableObject {
     }
     
     private func executeToolCall(_ toolCall: OpenAIToolCall) async throws -> String {
-        // Parse function name to extract server name and tool name
         let functionName = toolCall.function.name
+        
+        // Parse arguments
+        let arguments: [String: Any]
+        do {
+            let data = toolCall.function.arguments.data(using: .utf8) ?? Data()
+            arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        } catch {
+            throw MCPError.executionFailed("Invalid arguments format")
+        }
+        
+        // Check if it's a custom tool
+        if functionName.hasPrefix("custom_") {
+            guard let mcpManager = mcpManager else {
+                throw MCPError.notConnected
+            }
+            return try await mcpManager.executeCustomTool(name: functionName, arguments: arguments)
+        }
+        
+        // Otherwise, it's an MCP tool
+        // Parse function name to extract server name and tool name
         let components = functionName.components(separatedBy: "_")
         
         guard components.count >= 2 else {
@@ -846,15 +1052,6 @@ class OpenAIService: ObservableObject {
         guard let mcpManager = mcpManager,
               let server = mcpManager.servers.first(where: { $0.name == serverName }) else {
             throw MCPError.notConnected
-        }
-        
-        // Parse arguments
-        let arguments: [String: Any]
-        do {
-            let data = toolCall.function.arguments.data(using: .utf8) ?? Data()
-            arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        } catch {
-            throw MCPError.executionFailed("Invalid arguments format")
         }
         
         // Execute the tool
@@ -962,5 +1159,222 @@ class OpenAIService: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    // MARK: - Concurrent Response Handling
+    
+    private func updateResponseWithError(requestId: UUID, error: String) {
+        if let index = chatResponses.firstIndex(where: { $0.requestId == requestId }) {
+            let originalResponse = chatResponses[index]
+            let errorResponse = ChatResponse(
+                requestId: requestId,
+                message: originalResponse.message,
+                error: error
+            )
+            chatResponses[index] = errorResponse
+        }
+        
+        // Update legacy properties if this is the most recent request
+        if chatResponses.last?.requestId == requestId {
+            lastError = error
+        }
+    }
+    
+    private func updateResponseWithSuccess(requestId: UUID, response: String, toolCalls: [ToolCallDisplay] = []) {
+        if let index = chatResponses.firstIndex(where: { $0.requestId == requestId }) {
+            let originalResponse = chatResponses[index]
+            let successResponse = ChatResponse(
+                requestId: requestId,
+                message: originalResponse.message,
+                response: response,
+                toolCalls: toolCalls
+            )
+            chatResponses[index] = successResponse
+            
+            // Add to response queue for TTS
+            responseQueue.append(successResponse)
+        }
+        
+        // Update legacy properties if this is the most recent request
+        if chatResponses.last?.requestId == requestId {
+            lastResponse = response
+            lastError = nil
+            currentToolCalls = toolCalls
+        }
+    }
+    
+    private func handleConcurrentOpenAIResponse(choice: OpenAIChoice, request: ChatRequest) async {
+        if let toolCalls = choice.message.toolCalls, !toolCalls.isEmpty {
+            // Handle tool calls
+            print("Received \(toolCalls.count) tool calls for request \(request.id)")
+            await handleConcurrentToolCalls(toolCalls: toolCalls, request: request)
+        } else if let content = choice.message.content {
+            // Handle regular text response
+            print("Response for request \(request.id): \(content)")
+            let cleanedResponse = request.removeThinkTags ? self.removeThinkTagsFromResponse(content) : content
+            self.updateResponseWithSuccess(requestId: request.id, response: cleanedResponse)
+        } else {
+            self.updateResponseWithError(requestId: request.id, error: "Empty response from AI")
+        }
+    }
+    
+    private func handleConcurrentToolCalls(toolCalls: [OpenAIToolCall], request: ChatRequest) async {
+        var toolResults: [String] = []
+        var toolCallDisplays: [ToolCallDisplay] = []
+        
+        for toolCall in toolCalls {
+            print("Executing tool for request \(request.id): \(toolCall.function.name)")
+            print("Arguments: \(toolCall.function.arguments)")
+            
+            let resultString: String
+            do {
+                let result = try await executeToolCall(toolCall)
+                resultString = String(describing: result)
+                toolResults.append("Tool \(toolCall.function.name): \(resultString)")
+            } catch {
+                print("Tool execution failed for request \(request.id): \(error)")
+                resultString = "Error: \(error.localizedDescription)"
+                toolResults.append("Tool \(toolCall.function.name) failed: \(error.localizedDescription)")
+            }
+            
+            // Track tool call for UI display
+            let toolCallDisplay = ToolCallDisplay(
+                toolName: toolCall.function.name,
+                arguments: toolCall.function.arguments,
+                result: resultString,
+                timestamp: Date()
+            )
+            toolCallDisplays.append(toolCallDisplay)
+        }
+        
+        // Update response with tool calls
+        if let index = chatResponses.firstIndex(where: { $0.requestId == request.id }) {
+            let originalResponse = chatResponses[index]
+            let toolResponse = ChatResponse(
+                requestId: request.id,
+                message: originalResponse.message,
+                toolCalls: toolCallDisplays,
+                isProcessing: true  // Still processing follow-up
+            )
+            chatResponses[index] = toolResponse
+        }
+        
+        // Send results back to AI for final response
+        let toolResultsText = toolResults.joined(separator: "\n")
+        let followUpMessage = "The tool execution results are:\n\(toolResultsText)\n\nNow please provide a natural response to the user based on these results."
+        
+        // Make a follow-up call without tools to get the final response
+        await sendConcurrentFollowUpMessage(followUpMessage, request: request, toolCalls: toolCallDisplays)
+    }
+    
+    private func sendConcurrentFollowUpMessage(_ message: String, request: ChatRequest, toolCalls: [ToolCallDisplay]) async {
+        let baseURL = request.baseURL
+        let fullURL = baseURL.hasSuffix("/") ? baseURL + "v1/chat/completions" : baseURL + "/v1/chat/completions"
+        
+        guard let url = URL(string: fullURL) else {
+            updateResponseWithError(requestId: request.id, error: "Invalid API URL")
+            return
+        }
+        
+        let enhancedSystemPrompt = createEnhancedSystemPrompt(basePrompt: request.systemPrompt)
+        
+        let openAIRequest = OpenAIRequest(
+            model: request.model,
+            messages: [
+                OpenAIMessage(role: "system", content: enhancedSystemPrompt + "\n\nIMPORTANT: Respond only with your final answer to the user. Do not repeat tool results, explain your reasoning process, or add meta-commentary. Just provide the direct response the user needs."),
+                OpenAIMessage(role: "user", content: request.message),
+                OpenAIMessage(role: "assistant", content: message),
+                OpenAIMessage(role: "user", content: "Based on the above tool results, please provide your final response to my original question. Keep it concise and direct.")
+            ],
+            temperature: 0.7,
+            maxTokens: 1000,
+            topP: 1.0,
+            frequencyPenalty: 0.0,
+            presencePenalty: 0.0,
+            tools: nil,
+            toolChoice: nil
+        )
+        
+        // Create and send the request
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(request.apiKey)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            urlRequest.httpBody = try JSONEncoder().encode(openAIRequest)
+        } catch {
+            updateResponseWithError(requestId: request.id, error: "Failed to encode request: \(error.localizedDescription)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: urlRequest) { [weak self] data, response, error in
+            Task { @MainActor in
+                guard let self = self else { return }
+                
+                if let error = error {
+                    self.updateResponseWithError(requestId: request.id, error: "Request failed: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let data = data else {
+                    self.updateResponseWithError(requestId: request.id, error: "No data received")
+                    return
+                }
+                
+                do {
+                    let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
+                    if let firstChoice = openAIResponse.choices.first,
+                       let content = firstChoice.message.content {
+                        print("Raw final response for request \(request.id): \(content)")
+                        
+                        // Process the response and ensure we only show the final answer
+                        var finalResponse = request.removeThinkTags ? self.removeThinkTagsFromResponse(content) : content
+                        
+                        // Additional cleanup: if the response starts with references to tool results, 
+                        // try to extract just the final answer portion
+                        if finalResponse.contains("tool execution results") || finalResponse.contains("Based on") {
+                            // Look for the actual answer after common prefixes
+                            let patterns = [
+                                "Based on the.*?tool.*?results[.,:]\\s*",
+                                "The tool execution results.*?show.*?that\\s*",
+                                "According to the.*?results[.,:]\\s*",
+                                "The.*?results.*?indicate.*?that\\s*"
+                            ]
+                            
+                            for pattern in patterns {
+                                do {
+                                    let regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators])
+                                    let range = NSRange(finalResponse.startIndex..., in: finalResponse)
+                                    finalResponse = regex.stringByReplacingMatches(in: finalResponse, options: [], range: range, withTemplate: "")
+                                } catch {
+                                    print("Error applying cleanup pattern: \(error)")
+                                }
+                            }
+                            
+                            finalResponse = finalResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                        
+                        print("Cleaned final response for request \(request.id): \(finalResponse)")
+                        self.updateResponseWithSuccess(requestId: request.id, response: finalResponse, toolCalls: toolCalls)
+                    } else {
+                        self.updateResponseWithError(requestId: request.id, error: "No response content")
+                    }
+                } catch {
+                    self.updateResponseWithError(requestId: request.id, error: "Failed to parse follow-up response: \(error.localizedDescription)")
+                }
+            }
+        }.resume()
+    }
+    
+    // MARK: - Response Queue Management
+    
+    func getNextResponseForTTS() -> ChatResponse? {
+        guard !responseQueue.isEmpty else { return nil }
+        return responseQueue.removeFirst()
+    }
+    
+    func hasQueuedResponses() -> Bool {
+        return !responseQueue.isEmpty
     }
 }

@@ -146,6 +146,20 @@ struct ChatHistoryView: View {
                     .textSelection(.enabled)
             }
             
+            // Tool Calls Section
+            if !chat.toolCalls.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Tool Calls", systemImage: "wrench.and.screwdriver")
+                        .font(.headline)
+                    
+                    LazyVStack(spacing: 8) {
+                        ForEach(chat.toolCalls) { toolCall in
+                            ToolCallHistoryRowView(toolCall: toolCall)
+                        }
+                    }
+                }
+            }
+            
             // Audio Info
             HStack {
                 Image(systemName: "waveform")
@@ -285,5 +299,108 @@ struct ChatHistoryView: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+struct ToolCallHistoryRowView: View {
+    let toolCall: ToolCallHistoryItem
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            toolCallHeader
+            
+            if isExpanded {
+                toolCallDetails
+            }
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.05))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+    }
+    
+    private var toolCallHeader: some View {
+        HStack {
+            Image(systemName: "wrench.and.screwdriver")
+                .foregroundColor(.orange)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toolCall.toolName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text(DateFormatter.timeFormatter.string(from: toolCall.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .foregroundColor(.blue)
+                    .font(.caption)
+            }
+        }
+    }
+    
+    private var toolCallDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            argumentsSection
+            responseSection
+        }
+        .padding(.leading, 20)
+    }
+    
+    private var argumentsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Arguments:")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+            
+            Text(formatJSON(toolCall.arguments))
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(8)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    
+    private var responseSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Response:")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+            
+            Text(toolCall.result)
+                .font(.caption)
+                .textSelection(.enabled)
+                .padding(8)
+                .background(toolCall.result.hasPrefix("Error:") ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
+                .cornerRadius(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    
+    private func formatJSON(_ jsonString: String) -> String {
+        guard let data = jsonString.data(using: .utf8),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data),
+              let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: .prettyPrinted),
+              let prettyString = String(data: prettyData, encoding: .utf8) else {
+            return jsonString
+        }
+        return prettyString
     }
 }

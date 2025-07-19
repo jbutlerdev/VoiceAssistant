@@ -8,6 +8,7 @@ struct AIResponseView: View {
     @ObservedObject var sttManager: SpeechToTextManager
     let transcribedText: String
     @State private var lastSpokenResponse: String = ""
+    @State private var spokenResponses: Set<UUID> = []
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,6 +29,15 @@ struct AIResponseView: View {
                         .foregroundColor(.red)
                         .buttonStyle(.borderedProminent)
                         .disabled(!ttsManager.isSpeaking)
+                        
+                        // Show clear queue button when there are queued items
+                        if !ttsManager.speechQueue.isEmpty {
+                            Button("Clear Queue (\(ttsManager.speechQueue.count))") {
+                                ttsManager.clearQueue()
+                            }
+                            .foregroundColor(.orange)
+                            .buttonStyle(.bordered)
+                        }
                         
                         // Show speak again when there's content and not speaking
                         if !openAIService.lastResponse.isEmpty && !ttsManager.isSpeaking {
@@ -59,65 +69,88 @@ struct AIResponseView: View {
                         }
                     }
                     
-                    // Tool Calls Section
-                    if !openAIService.currentToolCalls.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Tool Calls:")
+                    // Show all chat responses
+                    if !openAIService.chatResponses.isEmpty {
+                        VStack(alignment: .leading, spacing: 15) {
+                            Text("AI Responses:")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             
-                            LazyVStack(spacing: 8) {
-                                ForEach(openAIService.currentToolCalls) { toolCall in
-                                    ToolCallRowView(toolCall: toolCall)
+                            LazyVStack(spacing: 15) {
+                                ForEach(openAIService.chatResponses) { response in
+                                    ChatResponseRowView(
+                                        response: response,
+                                        ttsManager: ttsManager,
+                                        settingsStore: settingsStore,
+                                        openAIService: openAIService
+                                    )
                                 }
                             }
                         }
                     }
                     
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("AI Response:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        if openAIService.isProcessing {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Generating response...")
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                        } else if let error = openAIService.lastError {
-                            VStack(alignment: .leading, spacing: 8) {
+                    // Legacy single response view (for backward compatibility)
+                    if openAIService.chatResponses.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("AI Response:")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            
+                            if openAIService.isProcessing {
                                 HStack {
-                                    Image(systemName: "exclamationmark.triangle")
-                                        .foregroundColor(.red)
-                                    Text("Error")
-                                        .foregroundColor(.red)
-                                        .font(.subheadline)
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Generating response...")
+                                        .foregroundColor(.secondary)
                                 }
-                                
-                                Text(error)
-                                    .foregroundColor(.red)
-                                    .font(.caption)
-                            }
-                            .padding(12)
-                            .background(Color.red.opacity(0.1))
-                            .cornerRadius(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        } else if !openAIService.lastResponse.isEmpty {
-                            Text(openAIService.lastResponse)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
-                                .background(Color.green.opacity(0.1))
+                            } else if let error = openAIService.lastError {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .foregroundColor(.red)
+                                        Text("Error")
+                                            .foregroundColor(.red)
+                                            .font(.subheadline)
+                                    }
+                                    
+                                    Text(error)
+                                        .foregroundColor(.red)
+                                        .font(.caption)
+                                }
+                                .padding(12)
+                                .background(Color.red.opacity(0.1))
                                 .cornerRadius(8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text("No response yet")
-                                .foregroundColor(.secondary)
-                                .italic()
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            } else if !openAIService.lastResponse.isEmpty {
+                                Text(openAIService.lastResponse)
+                                    .padding(12)
+                                    .background(Color.green.opacity(0.1))
+                                    .cornerRadius(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                Text("No response yet")
+                                    .foregroundColor(.secondary)
+                                    .italic()
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        
+                        // Tool Calls Section for legacy view
+                        if !openAIService.currentToolCalls.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Tool Calls:")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                
+                                LazyVStack(spacing: 8) {
+                                    ForEach(openAIService.currentToolCalls) { toolCall in
+                                        ToolCallRowView(toolCall: toolCall)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -125,11 +158,12 @@ struct AIResponseView: View {
             }
             
             // Clear button at bottom
-            if !openAIService.isProcessing && !openAIService.lastResponse.isEmpty {
+            if !openAIService.isProcessing && (!openAIService.lastResponse.isEmpty || !openAIService.chatResponses.isEmpty) {
                 HStack {
-                    Button("Clear Response") {
-                        openAIService.clearResponse()
+                    Button("Clear All Responses") {
+                        openAIService.clearAllResponses()
                         lastSpokenResponse = ""
+                        spokenResponses.removeAll()
                     }
                     .foregroundColor(.blue)
                     .buttonStyle(.bordered)
@@ -143,27 +177,164 @@ struct AIResponseView: View {
         .padding()
         .background(Color.gray.opacity(0.1))
         .cornerRadius(10)
+        .onChange(of: openAIService.responseQueue.count) { _ in
+            // Process TTS queue when new responses are added
+            if settingsStore.enableTextToSpeech {
+                processResponseQueue()
+            }
+        }
         .onChange(of: openAIService.lastResponse) { newResponse in
-            // Handle both TTS and history saving when a new response is received
+            // Handle history saving only - TTS is handled by responseQueue
             if !newResponse.isEmpty && !openAIService.isProcessing {
-                // Trigger TTS if enabled
-                if settingsStore.enableTextToSpeech && 
-                   newResponse != lastSpokenResponse {
-                    ttsManager.speak(newResponse)
-                    lastSpokenResponse = newResponse
+                // Only save to history if using legacy single response mode
+                if openAIService.chatResponses.isEmpty && !sttManager.transcriptionText.isEmpty && !sttManager.lastCapturedAudio.isEmpty {
+                    historyManager.addChat(
+                        recordedAudio: sttManager.lastCapturedAudio,
+                        transcription: sttManager.transcriptionText,
+                        aiResponse: newResponse,
+                        sampleRate: 16000.0,
+                        toolCalls: openAIService.currentToolCalls
+                    )
                 }
+            }
+        }
+    }
+    
+    private func processResponseQueue() {
+        // Process queued responses for TTS
+        while let response = openAIService.getNextResponseForTTS() {
+            if let responseText = response.response,
+               !spokenResponses.contains(response.id) {
+                print("TTS: Queueing response: \(responseText.prefix(50))...")
+                ttsManager.queueSpeech(responseText)
+                spokenResponses.insert(response.id)
                 
                 // Save to history
                 if !sttManager.transcriptionText.isEmpty && !sttManager.lastCapturedAudio.isEmpty {
                     historyManager.addChat(
                         recordedAudio: sttManager.lastCapturedAudio,
                         transcription: sttManager.transcriptionText,
-                        aiResponse: newResponse,
-                        sampleRate: 16000.0
+                        aiResponse: responseText,
+                        sampleRate: 16000.0,
+                        toolCalls: response.toolCalls
                     )
                 }
             }
         }
+    }
+}
+
+struct ChatResponseRowView: View {
+    let response: ChatResponse
+    @ObservedObject var ttsManager: TextToSpeechManager
+    @ObservedObject var settingsStore: SettingsStore
+    @ObservedObject var openAIService: OpenAIService
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Response header
+            HStack {
+                Text("Request: \(response.message.prefix(50))\(response.message.count > 50 ? "..." : "")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                Text(DateFormatter.timeFormatter.string(from: response.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                
+                // Remove individual response button
+                Button(action: {
+                    openAIService.removeResponse(id: response.id)
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            // Response content
+            if response.isProcessing {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Processing...")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            } else if let error = response.error {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.red)
+                        Text("Error")
+                            .foregroundColor(.red)
+                            .font(.subheadline)
+                    }
+                    
+                    Text(error)
+                        .foregroundColor(.red)
+                        .font(.caption)
+                }
+                .padding(12)
+                .background(Color.red.opacity(0.1))
+                .cornerRadius(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let responseText = response.response {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(responseText)
+                        .padding(12)
+                        .background(Color.green.opacity(0.1))
+                        .cornerRadius(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    // Individual response TTS controls
+                    if settingsStore.enableTextToSpeech {
+                        HStack {
+                            Button("Speak This") {
+                                ttsManager.speak(responseText)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.green)
+                            .buttonStyle(.bordered)
+                            
+                            Button("Queue This") {
+                                ttsManager.queueSpeech(responseText)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+            
+            // Tool calls section
+            if !response.toolCalls.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Tool Calls:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    LazyVStack(spacing: 8) {
+                        ForEach(response.toolCalls) { toolCall in
+                            ToolCallRowView(toolCall: toolCall)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.blue.opacity(0.05))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+        )
     }
 }
 
